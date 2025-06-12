@@ -1,0 +1,41 @@
+# Node.js
+node_modules/
+.env
+*.log
+dist/
+build/
+
+# Next.js
+.next/
+
+# VSCode
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+python/
+*.pyc
+__pycache__/
+
+# Misc
+*.sqlite
+*.db
+*.bak
+*.tmp
+.idea/
+*.swp
+
+# Ignore Excel and data files
+*.xlsx
+*.xls
+*.csv
+
+# Ignore coverage and test output
+coverage/
+.nyc_output/
+
+# Ignore local config
+*.local.js

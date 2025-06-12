@@ -1,0 +1,456 @@
+const express = require('express');
+const { Pool } = require('pg');
+const bodyParser = require('body-parser');
+const cors = require('cors');
+require('dotenv').config(); // Load environment variables from .env file
+
+const app = express();
+// Permitir payloads grandes
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
+// Configuración de CORS (ajusta el origin según tu frontend)
+const allowedOrigins = [
+    'https://covems.com.mx',
+    'http://localhost:3001', // agrega aquí los que necesites
+];
+
+app.use(cors({
+    origin: function (origin, callback) {
+        // Permitir solicitudes sin origin (como Postman) o si está en la lista
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error('No permitido por CORS'));
+        }
+    }
+}));
+
+// Configure Neon database connection
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL, // Use DATABASE_URL from .env
+    ssl: {
+        rejectUnauthorized: false, // Required for Neon
+    },
+});
+
+// API endpoint to add a user
+app.post('/api/users', async (req, res) => {
+    let {
+        nombre,
+        fechaNacimiento,
+        rfc,
+        curp,
+        localidad,
+        celular,
+        banco,
+        cuentaClabe,
+        clave,
+        tipoUsuario,
+        supervisor_clave,
+        estado,
+        esquema_pago // <-- Nuevo campo
+    } = req.body;
+
+    // Rango de claves por tipo de usuario
+    const claveRanges = {
+        '1': { min: 1, max: 999 },
+        '2': { min: 1000, max: 1800 },
+        '3': { min: 1801, max: 1999 },
+        '4': { min: 2000, max: 2999 },
+        '5': { min: 3000, max: 3999 },
+    };
+
+    // Si no hay clave, asignar automáticamente
+    if (!clave && tipoUsuario && claveRanges[tipoUsuario]) {
+        const { min, max } = claveRanges[tipoUsuario];
+        try {
+            const result = await pool.query(
+                'SELECT MAX(clave::int) as max_clave FROM users WHERE clave::int >= $1 AND clave::int <= $2',
+                [min, max]
+            );
+            const maxClave = result.rows[0].max_clave;
+            let nextClave = maxClave ? parseInt(maxClave) + 1 : min;
+            if (nextClave > max) {
+                return res.status(400).json({ error: 'No hay claves disponibles para este tipo de usuario.' });
+            }
+            clave = nextClave.toString();
+        } catch (error) {
+            console.error('Error buscando clave:', error);
+            return res.status(500).send('Error generando clave.');
+        }
+    }
+
+    try {
+        const query = `
+            INSERT INTO users (nombre, fecha_nacimiento, rfc, curp, localidad, celular, banco, cuenta_clabe, clave, tipo_usuario, supervisor_clave, estado, esquema_pago)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            RETURNING *;
+        `;
+        const values = [nombre, fechaNacimiento, rfc, curp, localidad, celular, banco, cuentaClabe, clave, tipoUsuario, supervisor_clave, estado || 'activo', esquema_pago];
+        const insertResult = await pool.query(query, values);
+
+        res.status(201).json(insertResult.rows[0]); // Return the inserted user
+    } catch (error) {
+        console.error('Error inserting user:', error);
+        res.status(500).send('Error saving user data.');
+    }
+});
+
+// API endpoint to get the last clave for a given tipoUsuario
+app.get('/api/users/last-clave/:tipoUsuario', async (req, res) => {
+    const { tipoUsuario } = req.params;
+
+    try {
+        const query = `
+            SELECT MAX(clave) AS lastClave
+            FROM users
+            WHERE tipo_usuario = $1;
+        `;
+        const result = await pool.query(query, [tipoUsuario]);
+        const lastClave = result.rows[0].lastclave || 0; // Default to 0 if no rows exist
+        res.json({ lastClave });
+    } catch (error) {
+        console.error('Error fetching last clave:', error);
+        res.status(500).send('Error fetching last clave.');
+    }
+});
+
+// Endpoint para obtener supervisores
+app.get('/api/supervisores', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT clave, nombre FROM users WHERE tipo_usuario = $1', ['3']);
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error fetching supervisores:', error);
+        res.status(500).send('Error fetching supervisores.');
+    }
+});
+
+// Endpoint para obtener todos los usuarios
+app.get('/api/users', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM users ORDER BY id ASC');
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error obteniendo usuarios:', error);
+        res.status(500).send('Error obteniendo usuarios.');
+    }
+});
+
+// Endpoint para actualizar usuario
+app.put('/api/users/:id', async (req, res) => {
+    const { id } = req.params;
+    const {
+        nombre,
+        fecha_nacimiento,
+        rfc,
+        curp,
+        localidad,
+        celular,
+        banco,
+        cuenta_clabe,
+        tipo_usuario,
+        supervisor_clave,
+        estado,
+        esquema_pago // <-- Nuevo campo
+    } = req.body;
+    try {
+        const query = `
+            UPDATE users SET
+                nombre = $1,
+                fecha_nacimiento = $2,
+                rfc = $3,
+                curp = $4,
+                localidad = $5,
+                celular = $6,
+                banco = $7,
+                cuenta_clabe = $8,
+                tipo_usuario = $9,
+                supervisor_clave = $10,
+                estado = $11,
+                esquema_pago = $12
+            WHERE id = $13
+            RETURNING *;
+        `;
+        const values = [
+            nombre,
+            fecha_nacimiento,
+            rfc,
+            curp,
+            localidad,
+            celular,
+            banco,
+            cuenta_clabe,
+            tipo_usuario,
+            supervisor_clave,
+            estado,
+            esquema_pago,
+            id
+        ];
+        const result = await pool.query(query, values);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Usuario no encontrado' });
+        }
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error('Error actualizando usuario:', error);
+        res.status(500).send('Error actualizando usuario.');
+    }
+});
+
+// Endpoint para crear una nueva solicitud
+app.post('/api/solicitudes', async (req, res) => {
+    const {
+        no_solicitud,
+        fecha_recepcion,
+        nombre_asegurado,
+        contratante,
+        agente_clave,
+        pase,
+        prima_ahorro,
+        forma_pago,
+        prima_solicitada,
+        no_poliza
+    } = req.body;
+    try {
+        const query = `
+            INSERT INTO solicitudes (
+                no_solicitud, fecha_recepcion, nombre_asegurado, contratante, agente_clave, pase, prima_ahorro, forma_pago, prima_solicitada, no_poliza
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            RETURNING *;
+        `;
+        const values = [
+            no_solicitud,
+            fecha_recepcion,
+            nombre_asegurado,
+            contratante,
+            agente_clave,
+            pase,
+            prima_ahorro,
+            forma_pago,
+            prima_solicitada,
+            no_poliza
+        ];
+        const result = await pool.query(query, values);
+        res.status(201).json(result.rows[0]);
+    } catch (error) {
+        console.error('Error creando solicitud:', error);
+        res.status(500).send('Error creando solicitud.');
+    }
+});
+
+// Endpoint para obtener agentes
+app.get('/api/agentes', async (req, res) => {
+    try {
+        const result = await pool.query(
+            "SELECT id, nombre, clave FROM users WHERE tipo_usuario IN ('2','3') ORDER BY nombre ASC"
+        );
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error obteniendo agentes:', error);
+        res.status(500).send('Error obteniendo agentes.');
+    }
+});
+
+// Endpoint para obtener todas las solicitudes
+app.get('/api/solicitudes', async (req, res) => {
+    try {
+        // No hay columna id, así que ordenamos por no_solicitud
+        const result = await pool.query('SELECT * FROM solicitudes ORDER BY no_solicitud ASC');
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error obteniendo solicitudes:', error);
+        res.status(500).send('Error obteniendo solicitudes.');
+    }
+});
+
+// Endpoint para actualizar no_poliza en solicitudes en lote y mostrar detalles de unión
+app.post('/api/solicitudes/update-polizas', async (req, res) => {
+    const { updates } = req.body; // [{ no_solicitud, no_poliza }, ...]
+    if (!Array.isArray(updates) || updates.length === 0) {
+        return res.status(400).json({ error: 'No hay datos para actualizar.' });
+    }
+    let updated = 0;
+    let notFound = [];
+    let joined = [];
+    try {
+        for (const { no_solicitud, no_poliza } of updates) {
+            // Actualizar y obtener datos de la solicitud y usuario
+            const result = await pool.query(
+                `UPDATE solicitudes SET no_poliza = $1 WHERE no_solicitud = $2 RETURNING no_solicitud, no_poliza, agente_clave`,
+                [no_poliza, no_solicitud]
+            );
+            if (result.rowCount === 0) {
+                notFound.push(no_solicitud);
+            } else {
+                updated++;
+                const solicitud = result.rows[0];
+                // Buscar usuario
+                let usuario = null;
+                if (solicitud && solicitud.agente_clave) {
+                    const userRes = await pool.query(
+                        'SELECT nombre FROM users WHERE clave = $1',
+                        [solicitud.agente_clave]
+                    );
+                    usuario = userRes.rows[0]?.nombre || null;
+                }
+                joined.push({
+                    no_solicitud: solicitud.no_solicitud,
+                    no_poliza: solicitud.no_poliza,
+                    agente_clave: solicitud.agente_clave,
+                    usuario
+                });
+            }
+        }
+        res.json({ updated, notFound, joined });
+    } catch (error) {
+        console.error('Error actualizando pólizas:', error);
+        res.status(500).json({ error: 'Error actualizando pólizas.' });
+    }
+});
+
+// Endpoint para cargar estado de cuenta, insertar recibos y polizas ligadas a solicitudes y usuarios
+app.post('/api/recibos/upload-statement', async (req, res) => {
+    const { polizas, recibos } = req.body;
+    if (!Array.isArray(polizas) || polizas.length === 0 || !Array.isArray(recibos) || recibos.length === 0) {
+        return res.status(400).json({ error: 'No hay datos para procesar.' });
+    }
+    // --- Backend validation for clave_agente ---
+    const invalidPolizas = polizas.filter(p => !p.clave_agente || isNaN(Number(p.clave_agente)) || String(p.clave_agente).trim() === '' || p.clave_agente === 'SIN_AGENTE');
+    const invalidRecibos = recibos.filter(r => !r.clave_agente || isNaN(Number(r.clave_agente)) || String(r.clave_agente).trim() === '' || r.clave_agente === 'SIN_AGENTE');
+    if (invalidPolizas.length > 0 || invalidRecibos.length > 0) {
+        return res.status(400).json({
+            error: 'Algunos registros tienen clave_agente inválida o faltante.',
+            detalles: {
+                polizas: invalidPolizas.map(p => ({ no_poliza: p.no_poliza, clave_agente: p.clave_agente })),
+                recibos: invalidRecibos.map(r => ({ no_poliza: r.no_poliza, recibo: r.recibo, clave_agente: r.clave_agente }))
+            }
+        });
+    }
+    let recibos_insertados = 0;
+    let polizas_insertadas = 0;
+    let detalles = [];
+    try {
+        // 1. Insertar/actualizar polizas únicas
+        for (const poliza of polizas) {
+            // Buscar la solicitud correspondiente
+            let solicitud_ligada = poliza.solicitud_ligada;
+            if (!solicitud_ligada && poliza.no_poliza) {
+                const solicitudRes = await pool.query(
+                    'SELECT no_solicitud FROM solicitudes WHERE no_poliza = $1',
+                    [poliza.no_poliza]
+                );
+                if (solicitudRes.rows.length > 0) {
+                    solicitud_ligada = solicitudRes.rows[0].no_solicitud;
+                }
+            }
+            await pool.query(
+                `INSERT INTO polizas (
+                    grupo, clave_agente, no_poliza, nombre_asegurado, ultimo_recibo, dsn, fecha_inicio, fecha_ultimo_mov, forma_pago, estatus, solicitud_ligada
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+                ON CONFLICT (no_poliza) DO UPDATE SET
+                    grupo=EXCLUDED.grupo,
+                    clave_agente=EXCLUDED.clave_agente,
+                    nombre_asegurado=EXCLUDED.nombre_asegurado,
+                    ultimo_recibo=EXCLUDED.ultimo_recibo,
+                    dsn=EXCLUDED.dsn,
+                    fecha_inicio=EXCLUDED.fecha_inicio,
+                    fecha_ultimo_mov=EXCLUDED.fecha_ultimo_mov,
+                    forma_pago=EXCLUDED.forma_pago,
+                    estatus=EXCLUDED.estatus,
+                    solicitud_ligada=EXCLUDED.solicitud_ligada
+                `,
+                [
+                    poliza.grupo,
+                    Number(poliza.clave_agente),
+                    poliza.no_poliza,
+                    poliza.nombre_asegurado,
+                    poliza.ultimo_recibo,
+                    poliza.dsn,
+                    poliza.fecha_inicio,
+                    poliza.fecha_ultimo_mov,
+                    poliza.forma_pago,
+                    poliza.estatus,
+                    solicitud_ligada
+                ]
+            );
+            polizas_insertadas++;
+        }
+        // 2. Insertar todos los recibos
+        for (const row of recibos) {
+            // Buscar la solicitud correspondiente
+            let solicitud_ligada = null;
+            if (row.no_poliza) {
+                const solicitudRes = await pool.query(
+                    'SELECT no_solicitud FROM solicitudes WHERE no_poliza = $1',
+                    [row.no_poliza]
+                );
+                if (solicitudRes.rows.length > 0) {
+                    solicitud_ligada = solicitudRes.rows[0].no_solicitud;
+                }
+            }
+            // --- Sanitize date fields: convert empty string to null ---
+            const fecha_inicio = row.fecha_inicio && String(row.fecha_inicio).trim() !== '' ? row.fecha_inicio : null;
+            const fecha_movimiento = row.fecha_movimiento && String(row.fecha_movimiento).trim() !== '' ? row.fecha_movimiento : null;
+            const fecha_vencimiento = row.fecha_vencimiento && String(row.fecha_vencimiento).trim() !== '' ? row.fecha_vencimiento : null;
+            // --- Sanitize new numeric fields ---
+            const prima_fracc = row.prima_fracc && String(row.prima_fracc).trim() !== '' ? Number(row.prima_fracc) : null;
+            const recargo_fijo = row.recargo_fijo && String(row.recargo_fijo).trim() !== '' ? Number(row.recargo_fijo) : null;
+            const importe_comble = row.importe_comble && String(row.importe_comble).trim() !== '' ? Number(row.importe_comble) : null;
+            const porcentaje_comis = row.porcentaje_comis && String(row.porcentaje_comis).trim() !== '' ? Number(row.porcentaje_comis) : null;
+            const nivelacion_variable = row.nivelacion_variable && String(row.nivelacion_variable).trim() !== '' ? Number(row.nivelacion_variable) : null;
+            const comis_primer_ano = row.comis_primer_ano && String(row.comis_primer_ano).trim() !== '' ? Number(row.comis_primer_ano) : null;
+            const comis_renovacion = row.comis_renovacion && String(row.comis_renovacion).trim() !== '' ? Number(row.comis_renovacion) : null;
+            await pool.query(
+                `INSERT INTO recibos (
+                    grupo, clave_agente, no_poliza, nombre_asegurado, recibo, dsn, fecha_inicio, fecha_ultimo_mov, fecha_vencimiento, forma_pago, estatus, solicitud_ligada,
+                    prima_fracc, recargo_fijo, importe_comble, porcentaje_comis, nivelacion_variable, comis_primer_ano, comis_renovacion
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)` +
+                '',
+                [
+                    row.grupo,
+                    Number(row.clave_agente),
+                    row.no_poliza,
+                    row.nombre_asegurado,
+                    row.recibo,
+                    row.dsn,
+                    fecha_inicio,
+                    fecha_movimiento,
+                    fecha_vencimiento,
+                    row.forma_pago,
+                    (row.dsn || '').toUpperCase() === 'CAN' ? 'CANCELADA' : 'VIGENTE',
+                    solicitud_ligada,
+                    prima_fracc,
+                    recargo_fijo,
+                    importe_comble,
+                    porcentaje_comis,
+                    nivelacion_variable,
+                    comis_primer_ano,
+                    comis_renovacion
+                ]
+            );
+            recibos_insertados++;
+            detalles.push({
+                no_poliza: row.no_poliza,
+                recibo: row.recibo,
+                solicitud_ligada
+            });
+        }
+        res.json({ polizas_insertadas, recibos_insertados, detalles });
+    } catch (error) {
+        console.error('Error procesando polizas/recibos:', error);
+        // Mejorar el mensaje si es un error de NOT NULL constraint
+        if (error.code === '23502' && error.column === 'clave_agente') {
+            return res.status(400).json({
+                error: "Error: Se intentó insertar un registro con clave_agente nulo o inválido en la base de datos.",
+                detalles: error.detail || error.message
+            });
+        }
+        res.status(500).json({ error: 'Error procesando polizas/recibos.' });
+    }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
