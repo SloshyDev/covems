@@ -7,107 +7,10 @@ const UploadStatementPage = () => {
     const [file, setFile] = useState(null);
     const [loading, setLoading] = useState(false);
     const [result, setResult] = useState(null);
-    const [preview, setPreview] = useState(null);
-    const [rowsPreview, setRowsPreview] = useState([]);
 
     const handleFileChange = (e) => {
         setFile(e.target.files[0]);
         setResult(null);
-        setPreview(null);
-        setRowsPreview([]); // Limpiar la previsualización de recibos al cambiar archivo
-    };
-
-    const handlePreview = async () => {
-        if (!file) return;
-        setLoading(true);
-        setPreview(null);
-        setRowsPreview([]);
-        try {
-            const data = await file.arrayBuffer();
-            const workbook = XLSX.read(data);
-            const sheet = workbook.Sheets[workbook.SheetNames[0]];
-            const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
-            // Obtener solicitudes del backend
-            const solicitudesRes = await fetch(`${API_BASE_URL}/api/solicitudes`);
-            const solicitudes = solicitudesRes.ok ? await solicitudesRes.json() : [];
-            // Agrupar por poliza y contar recibos, ligando clave_agente y solicitud
-            const polizaMap = {};
-            rows.forEach((row) => {
-                const no_poliza = String(row["No. Poliza"]);
-                if (!no_poliza) return;
-                const solicitud = solicitudes.find(s => String(s.no_poliza) === no_poliza);
-                if (!polizaMap[no_poliza]) {
-                    polizaMap[no_poliza] = {
-                        no_poliza,
-                        clave_agente: row["Clave del agente"],
-                        nombre_agente: row["Nombre del agente"],
-                        nombre_asegurado: row["Nombre Asegurado"],
-                        estatus: (row["Dsn"] || "").toUpperCase() === "CAN" ? "CANCELADA" : "VIGENTE",
-                        recibos: 0,
-                        solicitud_ligada: solicitud ? solicitud.no_solicitud : null,
-                        agente_clave: solicitud ? solicitud.agente_clave : null,
-                        fechas_mov: [],
-                        vencimientos: []
-                    };
-                }
-                polizaMap[no_poliza].recibos++;
-                if (row["Fecha movimiento"]) {
-                    polizaMap[no_poliza].fechas_mov.push(row["Fecha movimiento"]);
-                }
-                if (row["Fecha vencimiento"]) {
-                    polizaMap[no_poliza].vencimientos.push({
-                        fecha_vencimiento: row["Fecha vencimiento"],
-                        recibo: row["Recibo"]
-                    });
-                }
-            });
-            const previewList = Object.values(polizaMap).map(p => {
-                const filaExcel = rows.find(r => String(r["No. Poliza"]) === p.no_poliza);
-                const agente_clave_final = p.agente_clave || (filaExcel ? filaExcel["Clave del agente"] : null);
-                let fecha_ultimo_mov = null;
-                if (p.fechas_mov.length > 0) {
-                    fecha_ultimo_mov = p.fechas_mov.reduce((a, b) => new Date(a) > new Date(b) ? a : b);
-                }
-                let ultimo_recibo = null;
-                if (p.vencimientos.length > 0) {
-                    const masActual = p.vencimientos.reduce((a, b) => new Date(a.fecha_vencimiento) > new Date(b.fecha_vencimiento) ? a : b);
-                    ultimo_recibo = masActual.recibo;
-                }
-                return {
-                    ...p,
-                    clave_agente: agente_clave_final,
-                    agente_clave: agente_clave_final,
-                    solicitud_ligada: p.solicitud_ligada || (solicitudes.find(s => String(s.no_poliza) === p.no_poliza) ? solicitudes.find(s => String(s.no_poliza) === p.no_poliza).no_solicitud : null),
-                    fecha_ultimo_mov,
-                    ultimo_recibo
-                };
-            });
-            setPreview(previewList);
-
-            // Generar recibos enriquecidos para la tabla de previsualización
-            const recibosPreview = rows.map(row => {
-                const solicitud = solicitudes.find(s => String(s.no_poliza) === String(row["No. Poliza"]));
-                return {
-                    grupo: row["Grupo"],
-                    clave_agente: solicitud ? solicitud.agente_clave : row["Clave del agente"],
-                    no_poliza: row["No. Poliza"],
-                    nombre_asegurado: row["Nombre Asegurado"],
-                    recibo: row["Recibo"],
-                    dsn: row["Dsn"],
-                    fecha_inicio: row["Fecha Inicio"],
-                    fecha_movimiento: row["Fecha movimiento"],
-                    fecha_vencimiento: row["Fecha vencimiento"],
-                    forma_pago: row["Forma de pago"],
-                    estatus: (row["Dsn"] || "").toUpperCase() === "CAN" ? "CANCELADA" : "VIGENTE",
-                    solicitud_ligada: solicitud ? solicitud.no_solicitud : null
-                };
-            });
-            setRowsPreview(recibosPreview);
-        } catch (err) {
-            setPreview([]);
-            setRowsPreview([]);
-        }
-        setLoading(false);
     };
 
     const handleUpload = async (e) => {
@@ -117,7 +20,8 @@ const UploadStatementPage = () => {
         setResult(null);
         try {
             const data = await file.arrayBuffer();
-            const workbook = XLSX.read(data);
+            // Usar encoding latin1 para soportar ñ y acentos
+            const workbook = XLSX.read(data, { type: 'array', codepage: 1252 });
             const sheet = workbook.Sheets[workbook.SheetNames[0]];
             const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
             // Filtrar filas de fin de archivo por columna 'Grupo'
@@ -128,6 +32,9 @@ const UploadStatementPage = () => {
             // Obtener solicitudes del backend para ligar agente_clave
             const solicitudesRes = await fetch(`${API_BASE_URL}/api/solicitudes`);
             const solicitudes = solicitudesRes.ok ? await solicitudesRes.json() : [];
+            // Obtener usuarios para mapear supervisor
+            const usersRes = await fetch(`${API_BASE_URL}/api/users`);
+            const users = usersRes.ok ? await usersRes.json() : [];
             // Agrupa por no_poliza para calcular ultimo_recibo y fecha_ultimo_mov y fecha_vencimiento
             const polizaMap = {};
             rowsFiltrados.forEach((row) => {
@@ -199,6 +106,26 @@ const UploadStatementPage = () => {
                 const solicitud = solicitudes.find(s => String(s.no_poliza) === String(row["No. Poliza"]));
                 let clave_agente = solicitud ? solicitud.agente_clave : row["Clave del agente"];
                 if (!clave_agente || clave_agente === "null" || clave_agente === null) clave_agente = "SIN_AGENTE";
+                const dsn = (row["Dsn"] || "").toString().trim().toUpperCase();
+                const anoVig = Number(row["Año Vig."] || row["Ano Vig."] || 0);
+                const importeComble = Number(row["Importe Comble"] || 0);
+                const porcentaje_comis = Number(row["% Comis"] || 0);
+                const nivelacion_variable = Number(row["Nivelacion Variable"] || 0);
+                const comis_primer_ano = Number(row["Comis 1er Año"] || 0);
+                const comis_renovacion = row["Comis Renvovacion"];
+                const prima = Number(row["Prima Fracc"] || 0);
+                const recargo = Number(row["Recargo Fijo"] || 0);
+                const formaPago = (row["Forma de pago"] || "").toString().trim().toUpperCase();
+                const factor = getPagoFactor(formaPago);
+                const comis_promo = getComisPromo(nivelacion_variable, comis_primer_ano, importeComble, porcentaje_comis);
+                const comis_agente = getComisAgente(dsn, String(clave_agente).trim(), anoVig, importeComble, comis_promo, prima, recargo, factor);
+                const comis_super = getComisSuper(dsn, importeComble, factor);
+                // Buscar supervisor_clave
+                const user = users.find(u => String(u.clave) === String(clave_agente));
+                let supervisor_clave = null;
+                if (user && user.supervisor_clave) {
+                    supervisor_clave = user.supervisor_clave;
+                }
                 return {
                     grupo: row["Grupo"],
                     clave_agente,
@@ -210,7 +137,7 @@ const UploadStatementPage = () => {
                     fecha_movimiento: row["Fecha movimiento"],
                     fecha_vencimiento: row["Fecha vencimiento"],
                     forma_pago: row["Forma de pago"],
-                    estatus: (row["Dsn"] || "").toUpperCase() === "CAN" ? "CANCELADA" : "VIGENTE",
+                    estatus: dsn === "CAN" ? "CANCELADA" : "VIGENTE",
                     solicitud_ligada: solicitud ? solicitud.no_solicitud : null,
                     prima_fracc: row["Prima Fracc"],
                     recargo_fijo: row["Recargo Fijo"],
@@ -218,7 +145,12 @@ const UploadStatementPage = () => {
                     porcentaje_comis: row["% Comis"],
                     nivelacion_variable: row["Nivelacion Variable"],
                     comis_primer_ano: row["Comis 1er Año"],
-                    comis_renovacion: row["Comis Renvovacion"]
+                    comis_renovacion,
+                    ano_vig: anoVig,
+                    comis_promo,
+                    comis_agente,
+                    comis_super,
+                    clave_supervisor: supervisor_clave || '-' // Ahora el campo es clave_supervisor para backend
                 };
             });
             // Validar que ningún recibo tenga clave_agente vacío
@@ -229,35 +161,67 @@ const UploadStatementPage = () => {
                 setLoading(false);
                 return;
             }
-            // Mostrar tablas de confirmación antes de enviar
+            // Log para depuración: mostrar arrays en tabla
+            // Mostrar solo columnas relevantes en los logs
+            // Redondear comis_promo y comis_agente a dos decimales en los logs
+            const polizasLog = polizas.map(p => ({ ...p }));
+            const recibosLog = recibosEnriquecidos.map(r => ({
+                ...r,
+                comis_promo: r.comis_promo !== null && r.comis_promo !== undefined && !isNaN(r.comis_promo) ? Math.round(Number(r.comis_promo) * 100) / 100 : r.comis_promo,
+                comis_agente: r.comis_agente !== null && r.comis_agente !== undefined && !isNaN(r.comis_agente) && r.comis_agente !== '-' ? Math.round(Number(r.comis_agente) * 100) / 100 : r.comis_agente
+            }));
+            console.table(polizasLog);
+            console.table(recibosLog);
+            // Mostrar tabla en pantalla con la información de los recibos
             setResult({
-                confirmTables: {
-                    polizas,
-                    recibos: recibosEnriquecidos
-                }
+                info: 'Datos listos para enviar. Revisa la consola para ver los arrays completos.',
+                recibos: recibosLog
             });
-            // Esperar confirmación del usuario
-            if (!window.confirm(`¿Estás seguro que deseas subir ${polizas.length} pólizas y ${rowsFiltrados.length} recibos?`)) {
-                setLoading(false);
-                return;
-            }
-            // Enviar al backend: polizas deduplicadas y recibos enriquecidos
-            const response = await fetch(`${API_BASE_URL}/api/recibos/upload-statement`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ polizas, recibos: recibosEnriquecidos }),
-            });
-            const resJson = await response.json();
-            setResult(resJson);
+            setLoading(false);
+            return;
         } catch (err) {
             setResult({ error: "Error procesando el archivo o enviando los datos." });
         }
         setLoading(false);
     };
 
+    // Función auxiliar para factor de forma de pago
+    const getPagoFactor = (formaPago) => {
+        if (formaPago === "H") return 24;
+        if (formaPago === "M") return 12;
+        return 1;
+    };
+    // Función auxiliar para comis_promo
+    const getComisPromo = (nivelacion_variable, comis_primer_ano, importe_comble, porcentaje_comis) => {
+        if (nivelacion_variable !== 0) return nivelacion_variable;
+        if (comis_primer_ano !== 0) return comis_primer_ano;
+        return importe_comble * (porcentaje_comis / 100);
+    };
+    // Función auxiliar para comis_agente
+    const getComisAgente = (dsn, claveAgente, anoVig, importeComble, comisPromo, prima, recargo, factor) => {
+        if (dsn === "EMI") return Math.round(((prima - recargo) * factor * 0.225) * 100) / 100;
+        if (dsn === "CAN") {
+            if (anoVig === 1) return -1 * Math.round(((prima - recargo) * factor * 0.225) * 100) / 100;
+            return 0;
+        }
+        if (dsn === "COM") {
+            if (claveAgente === "2") return Math.round((comisPromo * 0.96) * 100) / 100;
+            if (anoVig === 2) return Math.round((importeComble * 0.10) * 100) / 100;
+            if (anoVig === 3) return Math.round((importeComble * 0.05) * 100) / 100;
+            if (anoVig >= 4 && anoVig <= 10) return Math.round((importeComble * 0.01) * 100) / 100;
+        }
+        return '-';
+    };
+    // Función auxiliar para comis_super
+    const getComisSuper = (dsn, importeComble, factor) => {
+        if (dsn === "EMI") return Math.round((importeComble * factor * 0.07) * 100) / 100;
+        if (dsn === "CAN" && factor !== 0) return -1 * Math.round((importeComble * factor * 0.07) * 100) / 100;
+        return null;
+    };
+
     return (
         <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-gray-900">
-            <div className="bg-gray-800 p-8 rounded-lg shadow-lg w-full max-w-4xl">
+            <div className="bg-gray-800 p-8 rounded-lg shadow-lg w-fit px-4">
                 <h1 className="text-2xl text-white font-bold mb-6 text-center">Cargar archivo de estado de cuenta</h1>
                 <form onSubmit={handleUpload}>
                     <input
@@ -269,14 +233,6 @@ const UploadStatementPage = () => {
                     />
                     <div className="flex gap-4 mb-4">
                         <button
-                            type="button"
-                            className="w-full bg-green-500 text-white py-3 rounded hover:bg-green-600 transition duration-200"
-                            onClick={handlePreview}
-                            disabled={loading || !file}
-                        >
-                            {loading ? "Procesando..." : "Previsualizar polizas"}
-                        </button>
-                        <button
                             type="submit"
                             className="w-full bg-blue-500 text-white py-3 rounded hover:bg-blue-600 transition duration-200"
                             disabled={loading || !file}
@@ -285,87 +241,35 @@ const UploadStatementPage = () => {
                         </button>
                     </div>
                 </form>
-                {preview && (
-                    <div className="mt-6 text-white">
-                        <h2 className="text-lg font-bold mb-2">Polizas a crear y cantidad de recibos</h2>
-                        <div className="overflow-x-auto mb-8">
-                            <table className="min-w-full text-xs text-left border border-gray-600">
-                                <thead className="bg-gray-700">
-                                    <tr>
-                                        <th className="px-2 py-1 border border-gray-600">No. Poliza</th>
-                                        <th className="px-2 py-1 border border-gray-600">Clave Agente</th>
-                                        <th className="px-2 py-1 border border-gray-600">Nombre Asegurado</th>
-                                        <th className="px-2 py-1 border border-gray-600">Estatus</th>
-                                        <th className="px-2 py-1 border border-gray-600">Recibos</th>
-                                        <th className="px-2 py-1 border border-gray-600">Fecha Último Mov.</th>
-                                        <th className="px-2 py-1 border border-gray-600">Último Recibo (por vencimiento)</th>
-                                        <th className="px-2 py-1 border border-gray-600">Solicitud Ligada</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {preview.map((p, i) => (
-                                        <tr key={i} className="odd:bg-gray-800 even:bg-gray-700">
-                                            <td className="px-2 py-1 border border-gray-600">{p.no_poliza}</td>
-                                            <td className="px-2 py-1 border border-gray-600">{p.clave_agente}</td>
-                                            <td className="px-2 py-1 border border-gray-600">{p.nombre_asegurado}</td>
-                                            <td className="px-2 py-1 border border-gray-600">{p.estatus}</td>
-                                            <td className="px-2 py-1 border border-gray-600">{p.recibos}</td>
-                                            <td className="px-2 py-1 border border-gray-600">{p.fecha_ultimo_mov || <span className='text-red-400'>-</span>}</td>
-                                            <td className="px-2 py-1 border border-gray-600">{p.ultimo_recibo || <span className='text-red-400'>-</span>}</td>
-                                            <td className="px-2 py-1 border border-gray-600">{p.solicitud_ligada || <span className='text-red-400'>No ligada</span>}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                        {/* Tabla de previsualización de recibos */}
-                        <h2 className="text-lg font-bold mb-2">Recibos a subir ({rowsPreview.length})</h2>
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full text-xs text-left border border-gray-600">
-                                <thead className="bg-gray-700">
-                                    <tr>
-                                        <th className="px-2 py-1 border border-gray-600">Grupo</th>
-                                        <th className="px-2 py-1 border border-gray-600">Clave Agente</th>
-                                        <th className="px-2 py-1 border border-gray-600">No. Poliza</th>
-                                        <th className="px-2 py-1 border border-gray-600">Nombre Asegurado</th>
-                                        <th className="px-2 py-1 border border-gray-600">Recibo</th>
-                                        <th className="px-2 py-1 border border-gray-600">Dsn</th>
-                                        <th className="px-2 py-1 border border-gray-600">Fecha Inicio</th>
-                                        <th className="px-2 py-1 border border-gray-600">Fecha movimiento</th>
-                                        <th className="px-2 py-1 border border-gray-600">Fecha vencimiento</th>
-                                        <th className="px-2 py-1 border border-gray-600">Forma de pago</th>
-                                        <th className="px-2 py-1 border border-gray-600">Estatus</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {rowsPreview && rowsPreview.map((r, i) => (
-                                        <tr key={i} className="odd:bg-gray-800 even:bg-gray-700">
-                                            <td className="px-2 py-1 border border-gray-600">{r.grupo}</td>
-                                            <td className="px-2 py-1 border border-gray-600">{r.clave_agente}</td>
-                                            <td className="px-2 py-1 border border-gray-600">{r.no_poliza}</td>
-                                            <td className="px-2 py-1 border border-gray-600">{r.nombre_asegurado}</td>
-                                            <td className="px-2 py-1 border border-gray-600">{r.recibo}</td>
-                                            <td className="px-2 py-1 border border-gray-600">{r.dsn}</td>
-                                            <td className="px-2 py-1 border border-gray-600">{r.fecha_inicio}</td>
-                                            <td className="px-2 py-1 border border-gray-600">{r.fecha_movimiento}</td>
-                                            <td className="px-2 py-1 border border-gray-600">{r.fecha_vencimiento}</td>
-                                            <td className="px-2 py-1 border border-gray-600">{r.forma_pago}</td>
-                                            <td className="px-2 py-1 border border-gray-600">{r.estatus}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                )}
                 {result && (
                     <div className="mt-6 text-white">
                         {result.error ? (
                             <div className="text-red-400">{result.error}</div>
                         ) : (
                             <div>
-                                <div>Recibos insertados: {result.recibos_insertados}</div>
-                                <div>Pólizas insertadas/actualizadas: {result.polizas_insertadas}</div>
+                                <div>{result.info}</div>
+                                {result.recibos && (
+                                    <div className="overflow-x-auto mt-4">
+                                        <table className="min-w-full text-xs text-left text-gray-400 border border-gray-600">
+                                            <thead className="bg-gray-700 text-gray-200">
+                                                <tr>
+                                                    {Object.keys(result.recibos[0] || {}).map((col) => (
+                                                        <th key={col} className="px-2 py-1 border border-gray-600">{col}</th>
+                                                    ))}
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {result.recibos.map((recibo, idx) => (
+                                                    <tr key={idx} className="hover:bg-gray-800">
+                                                        {Object.values(recibo).map((val, i) => (
+                                                            <td key={i} className="px-2 py-1 border border-gray-700 whitespace-nowrap">{val !== null && val !== undefined ? val.toString() : '-'}</td>
+                                                        ))}
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>

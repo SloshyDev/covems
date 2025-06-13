@@ -243,7 +243,7 @@ app.post('/api/solicitudes', async (req, res) => {
 app.get('/api/agentes', async (req, res) => {
     try {
         const result = await pool.query(
-            "SELECT id, nombre, clave FROM users WHERE tipo_usuario IN ('2','3') ORDER BY nombre ASC"
+            "SELECT id, nombre, clave FROM users WHERE tipo_usuario IN ('1','2') ORDER BY clave ASC"
         );
         res.json(result.rows);
     } catch (error) {
@@ -394,18 +394,32 @@ app.post('/api/recibos/upload-statement', async (req, res) => {
             const fecha_movimiento = row.fecha_movimiento && String(row.fecha_movimiento).trim() !== '' ? row.fecha_movimiento : null;
             const fecha_vencimiento = row.fecha_vencimiento && String(row.fecha_vencimiento).trim() !== '' ? row.fecha_vencimiento : null;
             // --- Sanitize new numeric fields ---
-            const prima_fracc = row.prima_fracc && String(row.prima_fracc).trim() !== '' ? Number(row.prima_fracc) : null;
-            const recargo_fijo = row.recargo_fijo && String(row.recargo_fijo).trim() !== '' ? Number(row.recargo_fijo) : null;
-            const importe_comble = row.importe_comble && String(row.importe_comble).trim() !== '' ? Number(row.importe_comble) : null;
-            const porcentaje_comis = row.porcentaje_comis && String(row.porcentaje_comis).trim() !== '' ? Number(row.porcentaje_comis) : null;
-            const nivelacion_variable = row.nivelacion_variable && String(row.nivelacion_variable).trim() !== '' ? Number(row.nivelacion_variable) : null;
-            const comis_primer_ano = row.comis_primer_ano && String(row.comis_primer_ano).trim() !== '' ? Number(row.comis_primer_ano) : null;
-            const comis_renovacion = row.comis_renovacion && String(row.comis_renovacion).trim() !== '' ? Number(row.comis_renovacion) : null;
+            const prima_fracc = row.prima_fracc && String(row.prima_fracc).trim() !== '' ? Math.round(Number(row.prima_fracc) * 100) / 100 : null;
+            const recargo_fijo = row.recargo_fijo && String(row.recargo_fijo).trim() !== '' ? Math.round(Number(row.recargo_fijo) * 100) / 100 : null;
+            const importe_comble = row.importe_comble && String(row.importe_comble).trim() !== '' ? Math.round(Number(row.importe_comble) * 100) / 100 : null;
+            const porcentaje_comis = row.porcentaje_comis && String(row.porcentaje_comis).trim() !== '' ? Math.round(Number(row.porcentaje_comis) * 100) / 100 : null;
+            const nivelacion_variable = row.nivelacion_variable && String(row.nivelacion_variable).trim() !== '' ? Math.round(Number(row.nivelacion_variable) * 100) / 100 : null;
+            const comis_primer_ano = row.comis_primer_ano && String(row.comis_primer_ano).trim() !== '' ? Math.round(Number(row.comis_primer_ano) * 100) / 100 : null;
+            const comis_renovacion = row.comis_renovacion && String(row.comis_renovacion).trim() !== '' ? Math.round(Number(row.comis_renovacion) * 100) / 100 : null;
+            const ano_vig = row.ano_vig && String(row.ano_vig).trim() !== '' ? Math.round(Number(row.ano_vig) * 100) / 100 : null;
+            const comis_promo = row.comis_promo && String(row.comis_promo).trim() !== '' ? Math.round(Number(row.comis_promo) * 100) / 100 : null;
+            let comis_agente_calc = comis_agente;
+            // Calcular comis_agente si DSN es EMI
+            if ((row.dsn || '').toString().trim().toUpperCase() === 'EMI') {
+                const prima = Number(prima_fracc) || 0;
+                const recargo = Number(recargo_fijo) || 0;
+                const formaPago = (row.forma_pago || '').toString().trim().toUpperCase();
+                let factor = 1;
+                if (formaPago === 'H') factor = 24;
+                else if (formaPago === 'M') factor = 12;
+                comis_agente_calc = Math.round(((prima - recargo) * factor * 0.225) * 100) / 100;
+            }
             await pool.query(
                 `INSERT INTO recibos (
                     grupo, clave_agente, no_poliza, nombre_asegurado, recibo, dsn, fecha_inicio, fecha_ultimo_mov, fecha_vencimiento, forma_pago, estatus, solicitud_ligada,
-                    prima_fracc, recargo_fijo, importe_comble, porcentaje_comis, nivelacion_variable, comis_primer_ano, comis_renovacion
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)` +
+                    prima_fracc, recargo_fijo, importe_comble, porcentaje_comis, nivelacion_variable, comis_primer_ano, comis_renovacion,
+                    ano_vig, comis_promo, comis_agente, comis_super, clave_supervisor
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)` +
                 '',
                 [
                     row.grupo,
@@ -418,7 +432,7 @@ app.post('/api/recibos/upload-statement', async (req, res) => {
                     fecha_movimiento,
                     fecha_vencimiento,
                     row.forma_pago,
-                    (row.dsn || '').toUpperCase() === 'CAN' ? 'CANCELADA' : 'VIGENTE',
+                    row.estatus,
                     solicitud_ligada,
                     prima_fracc,
                     recargo_fijo,
@@ -426,7 +440,12 @@ app.post('/api/recibos/upload-statement', async (req, res) => {
                     porcentaje_comis,
                     nivelacion_variable,
                     comis_primer_ano,
-                    comis_renovacion
+                    comis_renovacion,
+                    ano_vig,
+                    comis_promo,
+                    comis_agente_calc,
+                    comis_super,
+                    row.clave_supervisor // Nuevo campo
                 ]
             );
             recibos_insertados++;
@@ -447,6 +466,74 @@ app.post('/api/recibos/upload-statement', async (req, res) => {
             });
         }
         res.status(500).json({ error: 'Error procesando polizas/recibos.' });
+    }
+});
+
+// Endpoint para buscar pólizas por número de póliza, nombre asegurado, usuario (clave/nombre de agente), o promotoría
+app.get('/api/polizas/buscar', async (req, res) => {
+    const q = (req.query.q || '').trim();
+    const tipo = (req.query.tipo || '').trim(); // nuevo parámetro para tipo de búsqueda
+    if (!q) {
+        return res.status(400).json({ error: 'Debe proporcionar un parámetro de búsqueda (q).' });
+    }
+    try {
+        let result;
+        if (tipo === 'poliza') {
+            result = await pool.query(`
+                SELECT p.*, u.nombre AS nombre_agente
+                FROM polizas p
+                LEFT JOIN users u ON p.clave_agente::text = u.clave::text
+                WHERE p.no_poliza ILIKE $1
+                ORDER BY p.no_poliza ASC
+                LIMIT 100
+            `, [`%${q}%`]);
+        } else if (tipo === 'nombre_asegurado') {
+            result = await pool.query(`
+                SELECT p.*, u.nombre AS nombre_agente
+                FROM polizas p
+                LEFT JOIN users u ON p.clave_agente::text = u.clave::text
+                WHERE p.nombre_asegurado ILIKE $1
+                ORDER BY p.no_poliza ASC
+                LIMIT 100
+            `, [`%${q}%`]);
+        } else if (tipo === 'agente') {
+            // Buscar por clave de agente o nombre de agente
+            result = await pool.query(`
+                SELECT p.*, u.nombre AS nombre_agente
+                FROM polizas p
+                LEFT JOIN users u ON p.clave_agente::text = u.clave::text
+                WHERE p.clave_agente::text ILIKE $1 OR u.nombre ILIKE $1
+                ORDER BY p.no_poliza ASC
+                LIMIT 100
+            `, [`%${q}%`]);
+        } else if (tipo === 'promotoria') {
+            // Suponiendo que hay un campo p.promotoria o p.clave_promotoria, ajustar según tu modelo
+            result = await pool.query(`
+                SELECT p.*, u.nombre AS nombre_agente
+                FROM polizas p
+                LEFT JOIN users u ON p.clave_agente::text = u.clave::text
+                WHERE p.promotoria ILIKE $1
+                ORDER BY p.no_poliza ASC
+                LIMIT 100
+            `, [`%${q}%`]);
+        } else {
+            // Búsqueda flexible (compatibilidad hacia atrás)
+            result = await pool.query(`
+                SELECT p.*, u.nombre AS nombre_agente
+                FROM polizas p
+                LEFT JOIN users u ON p.clave_agente::text = u.clave::text
+                WHERE p.no_poliza ILIKE $1
+                   OR p.clave_agente::text ILIKE $1
+                   OR u.nombre ILIKE $1
+                   OR p.nombre_asegurado ILIKE $1
+                ORDER BY p.no_poliza ASC
+                LIMIT 100
+            `, [`%${q}%`]);
+        }
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error buscando pólizas:', error);
+        res.status(500).json({ error: 'Error buscando pólizas.' });
     }
 });
 
