@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { MagnifyingGlassIcon, PencilIcon, XMarkIcon, CheckIcon, UserIcon } from '@heroicons/react/24/outline';
+import { MagnifyingGlassIcon, PencilIcon, XMarkIcon, CheckIcon, UserIcon, UserPlusIcon } from '@heroicons/react/24/outline';
+import { estadosDeMexico, tiposDeUsuario } from "../constants";
 
 export default function EditUserPage() {
     const [users, setUsers] = useState([]);
@@ -10,7 +11,8 @@ export default function EditUserPage() {
     const [selectedUser, setSelectedUser] = useState(null);
     const [isEditing, setIsEditing] = useState(false);
     const [loading, setLoading] = useState(false);
-    const [supervisores, setSupervisores] = useState([]);
+    const [nuevoTipoUsuario, setNuevoTipoUsuario] = useState('');
+    const [claveSugerida, setClaveSugerida] = useState('');
 
     // Opciones para tipo de usuario con colores oscuros
     const tiposUsuario = [
@@ -21,10 +23,9 @@ export default function EditUserPage() {
         { value: '5', label: 'Director', color: 'bg-emerald-900 text-emerald-200' }
     ];
 
-    // Cargar usuarios y supervisores al montar el componente
+    // Cargar usuarios al montar el componente
     useEffect(() => {
         fetchUsers();
-        fetchSupervisores();
     }, []);
 
     // Filtrar usuarios cuando cambia la búsqueda
@@ -32,12 +33,23 @@ export default function EditUserPage() {
         if (searchNombre.trim() === '') {
             setFilteredUsers(users);
         } else {
-            const filtered = users.filter(user => 
+            const filtered = users.filter(user =>
                 user.nombre && user.nombre.toLowerCase().includes(searchNombre.toLowerCase())
             );
             setFilteredUsers(filtered);
         }
     }, [searchNombre, users]);
+
+    // Cuando se selecciona tipo de usuario en nuevo usuario, buscar clave sugerida
+    useEffect(() => {
+        if (isEditing && !selectedUser?.id && nuevoTipoUsuario) {
+            // Buscar la clave más alta de ese tipo
+            const claves = users.filter(u => u.tipo_usuario === nuevoTipoUsuario).map(u => parseInt(u.clave)).filter(Boolean);
+            const maxClave = claves.length > 0 ? Math.max(...claves) : 0;
+            setClaveSugerida((maxClave + 1).toString());
+            setSelectedUser(prev => ({ ...prev, tipo_usuario: nuevoTipoUsuario, clave: (maxClave + 1).toString() }));
+        }
+    }, [nuevoTipoUsuario, isEditing]);
 
     const fetchUsers = async () => {
         try {
@@ -59,18 +71,6 @@ export default function EditUserPage() {
         }
     };
 
-    const fetchSupervisores = async () => {
-        try {
-            const response = await fetch('http://localhost:3000/api/supervisores');
-            if (response.ok) {
-                const data = await response.json();
-                setSupervisores(data);
-            }
-        } catch (error) {
-            console.error('Error fetching supervisores:', error);
-        }
-    };
-
     const handleEditUser = (user) => {
         setSelectedUser({ ...user });
         setIsEditing(true);
@@ -86,24 +86,42 @@ export default function EditUserPage() {
 
     const handleSaveUser = async () => {
         if (!selectedUser) return;
-
         setLoading(true);
         try {
-            const response = await fetch(`http://localhost:3000/api/users/${selectedUser.id}`, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(selectedUser),
-            });
-
+            // Enviar el value (número) del estado directamente
+            const userToSend = {
+                ...selectedUser,
+                localidad: selectedUser.localidad ? String(selectedUser.localidad) : '' // value numérico como string
+            };
+            // Eliminar esquema_pago si existe
+            delete userToSend.esquema_pago;
+            let response;
+            if (selectedUser.id) {
+                // Actualizar usuario existente
+                response = await fetch(`http://localhost:3000/api/users/${selectedUser.id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(userToSend),
+                });
+            } else {
+                // Crear nuevo usuario
+                response = await fetch('http://localhost:3000/api/users', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(userToSend),
+                });
+            }
             if (response.ok) {
                 const updatedUser = await response.json();
                 setUsers(prev => {
-                    const updated = prev.map(user => 
-                        user.id === updatedUser.id ? updatedUser : user
-                    );
-                    // Mantener el orden por clave
+                    // Si es nuevo, agregarlo; si es update, reemplazar
+                    const exists = prev.some(u => u.id === updatedUser.id);
+                    let updated;
+                    if (exists) {
+                        updated = prev.map(user => user.id === updatedUser.id ? updatedUser : user);
+                    } else {
+                        updated = [...prev, updatedUser];
+                    }
                     return updated.sort((a, b) => {
                         const claveA = parseInt(a.clave) || 0;
                         const claveB = parseInt(b.clave) || 0;
@@ -112,14 +130,14 @@ export default function EditUserPage() {
                 });
                 setIsEditing(false);
                 setSelectedUser(null);
-                alert('Usuario actualizado exitosamente');
+                alert(selectedUser.id ? 'Usuario actualizado exitosamente' : 'Usuario creado exitosamente');
             } else {
                 const errorData = await response.json();
-                alert(`Error al actualizar usuario: ${errorData.error || 'Error desconocido'}`);
+                alert(`Error al guardar usuario: ${errorData.error || 'Error desconocido'}`);
             }
         } catch (error) {
-            console.error('Error updating user:', error);
-            alert('Error al actualizar usuario');
+            console.error('Error guardando usuario:', error);
+            alert('Error al guardar usuario');
         } finally {
             setLoading(false);
         }
@@ -147,9 +165,9 @@ export default function EditUserPage() {
                     </div>
                     <p className="text-gray-300">Administra y edita la información de todos los usuarios del sistema</p>
                 </div>
-                
+
                 {/* Buscador mejorado */}
-                <div className="bg-gray-800 rounded-xl shadow-lg border border-gray-700 p-6 mb-8">
+                <div className="bg-gray-800 rounded-xl shadow-lg border border-gray-700 p-6 mb-8 flex justify-between items-center">
                     <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
                         <div className="relative flex-1 max-w-md">
                             <MagnifyingGlassIcon className="h-5 w-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
@@ -167,7 +185,38 @@ export default function EditUserPage() {
                             <span>usuario(s) encontrado(s)</span>
                         </div>
                     </div>
+                    {/* Botón para nuevo usuario */}
+                    <div className="flex justify-end mb-6">
+                        <button
+                            onClick={() => {
+                                setSelectedUser({
+                                    nombre: '',
+                                    fecha_nacimiento: '',
+                                    rfc: '',
+                                    curp: '',
+                                    localidad: '',
+                                    celular: '',
+                                    banco: '',
+                                    cuenta_clabe: '',
+                                    tipo_usuario: '',
+                                    supervisor_clave: '',
+                                    estado: 'activo',
+                                    esquema_pago: '',
+                                    clave: ''
+                                });
+                                setNuevoTipoUsuario('');
+                                setClaveSugerida('');
+                                setIsEditing(true);
+                            }}
+                            className="bg-green-600 hover:bg-green-700 text-white font-semibold px-6 py-3 rounded-lg shadow transition-colors duration-200 flex items-center gap-2"
+                        >
+                            <UserPlusIcon className="h-5 w-5" />
+                            Nuevo Usuario
+                        </button>
+                    </div>
+
                 </div>
+
 
                 {/* Modal de edición mejorado */}
                 {isEditing && selectedUser && (
@@ -177,178 +226,191 @@ export default function EditUserPage() {
                             <div className="bg-gradient-to-r from-blue-600 to-blue-700 px-6 py-4 text-white">
                                 <div className="flex items-center justify-between">
                                     <div>
-                                        <h2 className="text-2xl font-bold">Editar Usuario</h2>
+                                        <h2 className="text-2xl font-bold">{selectedUser.id ? 'Editar Usuario' : 'Nuevo Usuario'}</h2>
                                         <p className="text-blue-100">Clave: {selectedUser.clave} • {selectedUser.nombre}</p>
                                     </div>
+
+                                    {/* Solo mostrar el select de tipo de usuario si es nuevo */}
+                                    {!selectedUser.id && (
+                                        <div className="col-span-1 md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+                                            <div>
+                                                <label className="block text-sm font-semibold text-gray-300 mb-2">Tipo de Usuario</label>
+                                                <select
+                                                    name="tipo_usuario"
+                                                    value={nuevoTipoUsuario}
+                                                    onChange={e => setNuevoTipoUsuario(e.target.value)}
+                                                    className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white appearance-none"
+                                                >
+                                                    <option value="">Selecciona un tipo</option>
+                                                    {tiposDeUsuario.map(tipo => (
+                                                        <option key={tipo.value} value={tipo.value}>{tipo.label}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-semibold text-gray-300 mb-2">Clave sugerida</label>
+                                                <input
+                                                    type="text"
+                                                    name="clave"
+                                                    value={selectedUser.clave || ''}
+                                                    onChange={handleInputChange}
+                                                    className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white font-mono"
+                                                    placeholder="Clave sugerida"
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
                                     <button
                                         onClick={handleCancelEdit}
-                                        className="p-2 hover:bg-white hover:bg-opacity-20 rounded-lg transition-colors"
+                                        className="p-2 hover:bg-red-500 hover:bg-opacity-20 rounded-lg transition-colors"
                                     >
                                         <XMarkIcon className="h-6 w-6" />
                                     </button>
                                 </div>
+
                             </div>
-                            
                             {/* Contenido del modal */}
                             <div className="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    <div className="space-y-4">
-                                        <div>
-                                            <label className="block text-sm font-semibold text-gray-300 mb-2">Nombre Completo</label>
-                                            <input
-                                                type="text"
-                                                name="nombre"
-                                                value={selectedUser.nombre || ''}
-                                                onChange={handleInputChange}
-                                                className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white placeholder-gray-400"
-                                                placeholder="Ingrese el nombre completo"
-                                            />
-                                        </div>
 
-                                        <div>
-                                            <label className="block text-sm font-semibold text-gray-300 mb-2">Fecha de Nacimiento</label>
-                                            <input
-                                                type="date"
-                                                name="fecha_nacimiento"
-                                                value={selectedUser.fecha_nacimiento || ''}
-                                                onChange={handleInputChange}
-                                                className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white"
-                                            />
-                                        </div>
 
-                                        <div>
-                                            <label className="block text-sm font-semibold text-gray-300 mb-2">RFC</label>
-                                            <input
-                                                type="text"
-                                                name="rfc"
-                                                value={selectedUser.rfc || ''}
-                                                onChange={handleInputChange}
-                                                className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white placeholder-gray-400"
-                                                placeholder="ABCD123456ABC"
-                                            />
-                                        </div>
+                                    <div className='col-span-2'>
+                                        <label className="block text-sm font-semibold text-gray-300 mb-2 text-center">Nombre</label>
+                                        <input
+                                            type="text"
+                                            name="nombre"
+                                            value={selectedUser.nombre || ''}
+                                            onChange={handleInputChange}
+                                            className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white placeholder-gray-400"
+                                            placeholder="Ingrese el nombre completo"
+                                        />
+                                    </div>
 
-                                        <div>
-                                            <label className="block text-sm font-semibold text-gray-300 mb-2">CURP</label>
-                                            <input
-                                                type="text"
-                                                name="curp"
-                                                value={selectedUser.curp || ''}
-                                                onChange={handleInputChange}
-                                                className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white placeholder-gray-400"
-                                                placeholder="ABCD123456ABCDEF01"
-                                            />
-                                        </div>
+                                    <div>
+                                        <label className="block text-sm font-semibold text-gray-300 mb-2">Fecha de Nacimiento</label>
+                                        <input
+                                            type="date"
+                                            name="fecha_nacimiento"
+                                            value={selectedUser.fecha_nacimiento ? selectedUser.fecha_nacimiento.slice(0, 10) : ''}
+                                            onChange={handleInputChange}
+                                            className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white"
+                                        />
+                                    </div>
 
-                                        <div>
-                                            <label className="block text-sm font-semibold text-gray-300 mb-2">Localidad</label>
-                                            <input
-                                                type="text"
-                                                name="localidad"
-                                                value={selectedUser.localidad || ''}
-                                                onChange={handleInputChange}
-                                                className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white placeholder-gray-400"
-                                                placeholder="Ciudad, Estado"
-                                            />
-                                        </div>
+                                    <div>
+                                        <label className="block text-sm font-semibold text-gray-300 mb-2">RFC</label>
+                                        <input
+                                            type="text"
+                                            name="rfc"
+                                            value={selectedUser.rfc || ''}
+                                            onChange={handleInputChange}
+                                            className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white placeholder-gray-400"
+                                            placeholder="ABCD123456ABC"
+                                        />
+                                    </div>
 
-                                        <div>
-                                            <label className="block text-sm font-semibold text-gray-300 mb-2">Teléfono Celular</label>
-                                            <input
-                                                type="text"
-                                                name="celular"
-                                                value={selectedUser.celular || ''}
-                                                onChange={handleInputChange}
-                                                className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white placeholder-gray-400"
-                                                placeholder="55 1234 5678"
-                                            />
+                                    <div>
+                                        <label className="block text-sm font-semibold text-gray-300 mb-2">CURP</label>
+                                        <input
+                                            type="text"
+                                            name="curp"
+                                            value={selectedUser.curp || ''}
+                                            onChange={handleInputChange}
+                                            className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white placeholder-gray-400"
+                                            placeholder="ABCD123456ABCDEF01"
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-sm font-semibold text-gray-300 mb-2">Localidad (Estado)</label>
+                                        <select
+                                            name="localidad"
+                                            value={estadosDeMexico.find(e => e.value.toString() === selectedUser.localidad?.toString())?.value || ''}
+                                            onChange={e => handleInputChange({ target: { name: 'localidad', value: e.target.value } })}
+                                            className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white appearance-none"
+                                            required
+                                        >
+                                            <option value="">Selecciona un estado</option>
+                                            {estadosDeMexico.map(estado => (
+                                                <option key={estado.value} value={estado.value}>{estado.label}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-sm font-semibold text-gray-300 mb-2">Teléfono Celular</label>
+                                        <input
+                                            type="text"
+                                            name="celular"
+                                            value={selectedUser.celular || ''}
+                                            onChange={handleInputChange}
+                                            className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white placeholder-gray-400"
+                                            placeholder="55 1234 5678"
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-sm font-semibold text-gray-300 mb-2">Banco</label>
+                                        <input
+                                            type="text"
+                                            name="banco"
+                                            value={selectedUser.banco || ''}
+                                            onChange={handleInputChange}
+                                            className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white placeholder-gray-400"
+                                            placeholder="Nombre del banco"
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-sm font-semibold text-gray-300 mb-2">Cuenta CLABE</label>
+                                        <input
+                                            type="text"
+                                            name="cuenta_clabe"
+                                            value={selectedUser.cuenta_clabe || ''}
+                                            onChange={handleInputChange}
+                                            className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white placeholder-gray-400"
+                                            placeholder="18 dígitos de la CLABE"
+                                        />
+                                    </div>
+
+
+
+                                    <div>
+                                        <label className="block text-sm font-semibold text-gray-300 mb-2">Supervisor Asignado</label>
+                                        <select
+                                            name="supervisor_clave"
+                                            value={selectedUser.supervisor_clave || ''}
+                                            onChange={handleInputChange}
+                                            className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white placeholder-gray-400 appearance-none"
+                                        >
+                                            <option value="">Sin supervisor asignado</option>
+                                            {users.filter(u => u.tipo_usuario === '3').map(supervisor => (
+                                                <option key={supervisor.clave} value={supervisor.clave}>
+                                                    {supervisor.clave} - {supervisor.nombre}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+
+                                    <div className='col-span-2 flex flex-col items-center'>
+                                        <label className="block text-sm font-semibold text-gray-300 mb-2">Estado del Usuario</label>
+                                        <div className="flex items-center gap-4 mt-2">
+                                            <span className={`font-semibold text-sm min-w-24 ${selectedUser.estado === 'activo' ? 'text-green-400' : 'text-red-400'}`}>
+                                                {selectedUser.estado === 'activo' ? '🟢 Activo' : '🔴 Cancelado'}
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleInputChange({ target: { name: 'estado', value: selectedUser.estado === 'activo' ? 'cancelado' : 'activo' } })}
+                                                className={`w-14 h-8 flex items-center rounded-full p-1 transition-colors duration-300 focus:outline-none ${selectedUser.estado === 'activo' ? 'bg-green-600' : 'bg-red-600'}`}
+                                                aria-label="Cambiar estado"
+                                            >
+                                                <span
+                                                    className={`w-6 h-6 bg-white rounded-full shadow-md transform transition-transform duration-300 ${selectedUser.estado === 'activo' ? 'translate-x-6' : 'translate-x-0'}`}
+                                                />
+                                            </button>
                                         </div>
                                     </div>
 
-                                    <div className="space-y-4">
-                                        <div>
-                                            <label className="block text-sm font-semibold text-gray-300 mb-2">Banco</label>
-                                            <input
-                                                type="text"
-                                                name="banco"
-                                                value={selectedUser.banco || ''}
-                                                onChange={handleInputChange}
-                                                className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white placeholder-gray-400"
-                                                placeholder="Nombre del banco"
-                                            />
-                                        </div>
-
-                                        <div>
-                                            <label className="block text-sm font-semibold text-gray-300 mb-2">Cuenta CLABE</label>
-                                            <input
-                                                type="text"
-                                                name="cuenta_clabe"
-                                                value={selectedUser.cuenta_clabe || ''}
-                                                onChange={handleInputChange}
-                                                className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white placeholder-gray-400"
-                                                placeholder="18 dígitos de la CLABE"
-                                            />
-                                        </div>
-
-                                        <div>
-                                            <label className="block text-sm font-semibold text-gray-300 mb-2">Tipo de Usuario</label>
-                                            <select
-                                                name="tipo_usuario"
-                                                value={selectedUser.tipo_usuario || ''}
-                                                onChange={handleInputChange}
-                                                className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white"
-                                            >
-                                                <option value="">Seleccionar tipo</option>
-                                                {tiposUsuario.map(tipo => (
-                                                    <option key={tipo.value} value={tipo.value}>
-                                                        {tipo.label}
-                                                    </option>
-                                                ))}
-                                            </select>
-                                        </div>
-
-                                        <div>
-                                            <label className="block text-sm font-semibold text-gray-300 mb-2">Supervisor Asignado</label>
-                                            <select
-                                                name="supervisor_clave"
-                                                value={selectedUser.supervisor_clave || ''}
-                                                onChange={handleInputChange}
-                                                className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white"
-                                            >
-                                                <option value="">Sin supervisor asignado</option>
-                                                {supervisores.map(supervisor => (
-                                                    <option key={supervisor.clave} value={supervisor.clave}>
-                                                        {supervisor.clave} - {supervisor.nombre}
-                                                    </option>
-                                                ))}
-                                            </select>
-                                        </div>
-
-                                        <div>
-                                            <label className="block text-sm font-semibold text-gray-300 mb-2">Estado del Usuario</label>
-                                            <select
-                                                name="estado"
-                                                value={selectedUser.estado || 'activo'}
-                                                onChange={handleInputChange}
-                                                className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white"
-                                            >
-                                                <option value="activo">Activo</option>
-                                                <option value="inactivo">Inactivo</option>
-                                            </select>
-                                        </div>
-
-                                        <div>
-                                            <label className="block text-sm font-semibold text-gray-300 mb-2">Esquema de Pago</label>
-                                            <input
-                                                type="text"
-                                                name="esquema_pago"
-                                                value={selectedUser.esquema_pago || ''}
-                                                onChange={handleInputChange}
-                                                className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white placeholder-gray-400"
-                                                placeholder="Esquema de comisiones"
-                                            />
-                                        </div>
-                                    </div>
                                 </div>
                             </div>
 
@@ -397,20 +459,22 @@ export default function EditUserPage() {
                                             </div>
                                             <div>
                                                 <h3 className="font-semibold text-white text-lg">{user.nombre || 'Sin nombre'}</h3>
-                                                <p className="text-sm text-gray-400">Clave: {user.clave}</p>
+                                                <div className="">
+                                                    <p className="text-sm text-gray-400">Clave: {user.clave}</p>
+                                                    <p className="text-sm text-gray-400">Supervisor: {user.supervisor_clave || 'Ninguno'}</p>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
-                                    
+
                                     <div className="flex items-center gap-2">
                                         <span className={`inline-flex px-3 py-1 text-xs font-semibold rounded-full ${tipoInfo.color}`}>
                                             {tipoInfo.label}
                                         </span>
-                                        <span className={`inline-flex px-3 py-1 text-xs font-semibold rounded-full ${
-                                            user.estado === 'activo' 
-                                                ? 'bg-green-900 text-green-200' 
-                                                : 'bg-red-900 text-red-200'
-                                        }`}>
+                                        <span className={`inline-flex px-3 py-1 text-xs font-semibold rounded-full ${user.estado === 'activo'
+                                            ? 'bg-green-900 text-green-200'
+                                            : 'bg-red-900 text-red-200'
+                                            }`}>
                                             {user.estado}
                                         </span>
                                     </div>
@@ -424,10 +488,10 @@ export default function EditUserPage() {
                                             <span className="ml-2">{user.celular}</span>
                                         </div>
                                     )}
-                                    {user.localidad && (
+                                    {user.cuenta_clabe && (
                                         <div className="flex items-center text-sm text-gray-300">
-                                            <span className="font-medium">Localidad:</span>
-                                            <span className="ml-2">{user.localidad}</span>
+                                            <span className="font-medium">CLABE:</span>
+                                            <span className="ml-2">{user.cuenta_clabe}</span>
                                         </div>
                                     )}
                                     {user.banco && (
@@ -452,7 +516,7 @@ export default function EditUserPage() {
                         );
                     })}
                 </div>
-                
+
                 {filteredUsers.length === 0 && (
                     <div className="text-center py-16">
                         <UserIcon className="h-16 w-16 text-gray-500 mx-auto mb-4" />

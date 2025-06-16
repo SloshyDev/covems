@@ -1,0 +1,63 @@
+// Bancos de México
+export const bancosDeMexico = [
+    { prefix: '002', name: 'Banamex' },
+    { prefix: '012', name: 'BBVA' },
+    { prefix: '014', name: 'Santander' },
+    { prefix: '021', name: 'HSBC' },
+    { prefix: '030', name: 'Banco del Bajío' },
+    { prefix: '036', name: 'Inbursa' },
+    { prefix: '037', name: 'Intercam' },
+    { prefix: '042', name: 'Scotiabank' },
+    { prefix: '044', name: 'Banca Mifel' },
+    { prefix: '058', name: 'Banregio' },
+    { prefix: '062', name: 'Afirme' },
+    { prefix: '072', name: 'Banorte' },
+    { prefix: '127', name: 'Banco Azteca' },
+    { prefix: '137', name: 'Bancoppel' },
+    { prefix: '143', name: 'Consubanco' },
+];
+
+// Tipos de usuario
+export const tiposDeUsuario = [
+    { value: '1', label: 'Agente condiciones especiales' },
+    { value: '2', label: 'Agente DXN' },
+    { value: '3', label: 'Supervisor DXN' },
+    { value: '4', label: 'Agente allianz' },
+    { value: '5', label: 'Gerente allianz' },
+];
+
+// Estados de México
+export const estadosDeMexico = [
+    { value: 1, label: 'Aguascalientes' },
+    { value: 2, label: 'Baja California' },
+    { value: 3, label: 'Baja California Sur' },
+    { value: 4, label: 'Campeche' },
+    { value: 5, label: 'Chiapas' },
+    { value: 6, label: 'Chihuahua' },
+    { value: 7, label: 'Ciudad de México' },
+    { value: 8, label: 'Coahuila' },
+    { value: 9, label: 'Colima' },
+    { value: 10, label: 'Durango' },
+    { value: 11, label: 'Estado de México' },
+    { value: 12, label: 'Guanajuato' },
+    { value: 13, label: 'Guerrero' },
+    { value: 14, label: 'Hidalgo' },
+    { value: 15, label: 'Jalisco' },
+    { value: 16, label: 'Michoacán' },
+    { value: 17, label: 'Morelos' },
+    { value: 18, label: 'Nayarit' },
+    { value: 19, label: 'Nuevo León' },
+    { value: 20, label: 'Oaxaca' },
+    { value: 21, label: 'Puebla' },
+    { value: 22, label: 'Querétaro' },
+    { value: 23, label: 'Quintana Roo' },
+    { value: 24, label: 'San Luis Potosí' },
+    { value: 25, label: 'Sinaloa' },
+    { value: 26, label: 'Sonora' },
+    { value: 27, label: 'Tabasco' },
+    { value: 28, label: 'Tamaulipas' },
+    { value: 29, label: 'Tlaxcala' },
+    { value: 30, label: 'Veracruz' },
+    { value: 31, label: 'Yucatán' },
+    { value: 32, label: 'Zacatecas' },
+];

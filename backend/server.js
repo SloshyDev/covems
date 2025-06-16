@@ -48,7 +48,6 @@ app.post('/api/users', async (req, res) => {
         tipoUsuario,
         supervisor_clave,
         estado,
-        esquema_pago // <-- Nuevo campo
     } = req.body;
 
     // Rango de claves por tipo de usuario
@@ -82,11 +81,11 @@ app.post('/api/users', async (req, res) => {
 
     try {
         const query = `
-            INSERT INTO users (nombre, fecha_nacimiento, rfc, curp, localidad, celular, banco, cuenta_clabe, clave, tipo_usuario, supervisor_clave, estado, esquema_pago)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            INSERT INTO users (nombre, fecha_nacimiento, rfc, curp, localidad, celular, banco, cuenta_clabe, clave, tipo_usuario, supervisor_clave, estado)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             RETURNING *;
         `;
-        const values = [nombre, fechaNacimiento, rfc, curp, localidad, celular, banco, cuentaClabe, clave, tipoUsuario, supervisor_clave, estado || 'activo', esquema_pago];
+        const values = [nombre, fechaNacimiento, rfc, curp, localidad, celular, banco, cuentaClabe, clave, tipoUsuario, supervisor_clave, estado || 'activo'];
         const insertResult = await pool.query(query, values);
 
         res.status(201).json(insertResult.rows[0]); // Return the inserted user
@@ -152,8 +151,13 @@ app.put('/api/users/:id', async (req, res) => {
         tipo_usuario,
         supervisor_clave,
         estado,
-        esquema_pago // <-- Nuevo campo
+        clave,
     } = req.body;
+
+    // Validar y convertir clave y tipo_usuario a número o null
+    let clave_num = (!clave || clave === 'undefined' || isNaN(Number(clave))) ? null : parseInt(clave);
+    let tipo_usuario_num = (!tipo_usuario || tipo_usuario === 'undefined' || isNaN(Number(tipo_usuario))) ? null : parseInt(tipo_usuario);
+
     try {
         const query = `
             UPDATE users SET
@@ -168,7 +172,7 @@ app.put('/api/users/:id', async (req, res) => {
                 tipo_usuario = $9,
                 supervisor_clave = $10,
                 estado = $11,
-                esquema_pago = $12
+                clave = $12
             WHERE id = $13
             RETURNING *;
         `;
@@ -181,10 +185,10 @@ app.put('/api/users/:id', async (req, res) => {
             celular,
             banco,
             cuenta_clabe,
-            tipo_usuario,
+            tipo_usuario_num,
             supervisor_clave,
             estado,
-            esquema_pago,
+            clave_num,
             id
         ];
         const result = await pool.query(query, values);

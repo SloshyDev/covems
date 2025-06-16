@@ -2,7 +2,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import React from 'react';
-import { ArrowUpTrayIcon, BuildingLibraryIcon, ChartBarIcon, FolderMinusIcon } from '@heroicons/react/24/outline';
+import { ArrowUpTrayIcon, BuildingLibraryIcon, ChartBarIcon, FolderMinusIcon, UserGroupIcon } from '@heroicons/react/24/outline';
 
 const Header = () => {
     return (
@@ -37,8 +37,8 @@ const Header = () => {
                 </li>
                 <li className="text-white">
                     <Link href="/edit_user" className='flex items-center text-white hover:text-gray-300'>
-                        <ChartBarIcon className="h-5 w-5 inline-block mr-2" />
-                        Editar usarios
+                        <UserGroupIcon className="h-5 w-5 inline-block mr-2" />
+                        Gestion de usuarios
                     </Link>
                 </li>
             </ul>
