@@ -1,171 +1,130 @@
 'use client';
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo } from "react";
 import API_BASE_URL from '../../config';
 
-const SEARCH_TYPES = [
-    { value: "poliza", label: "Póliza" },
-    { value: "nombre_asegurado", label: "Nombre asegurado" },
-    { value: "agente", label: "Agente" },
-    { value: "promotoria", label: "Promotoría" },
-];
-
 const StatementsPage = () => {
-    const [query, setQuery] = useState("");
-    const [results, setResults] = useState([]);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState("");
-    const [searchType, setSearchType] = useState("poliza");
-    const [agentes, setAgentes] = useState([]);
-    const [selectedAgente, setSelectedAgente] = useState("");
+    const [fechaInicio, setFechaInicio] = useState("");
+    const [fechaFin, setFechaFin] = useState("");
+    const [recibosPorFecha, setRecibosPorFecha] = useState([]);
+    const [loadingFechas, setLoadingFechas] = useState(false);
+    const [errorFechas, setErrorFechas] = useState("");
 
-    useEffect(() => {
-        if (searchType === "agente" && agentes.length === 0) {
-            fetch(`${API_BASE_URL}/api/agentes`)
-                .then(res => res.json())
-                .then(data => setAgentes(data))
-                .catch(() => setAgentes([]));
-        }
-    }, [searchType]);
 
-    const handleSearch = async (e) => {
-        e && e.preventDefault();
-        setLoading(true);
-        setError("");
-        setResults([]);
-        let url = "";
-        let q = query;
-        if (searchType === "agente") {
-            if (!selectedAgente) {
-                setLoading(false);
-                return;
-            }
-            q = selectedAgente;
+    const buscarRecibosPorFecha = async (e) => {
+        e.preventDefault();
+        setLoadingFechas(true);
+        setErrorFechas("");
+        setRecibosPorFecha([]);
+        if (!fechaInicio || !fechaFin) {
+            setErrorFechas("Selecciona ambas fechas");
+            setLoadingFechas(false);
+            return;
         }
-        url = `${API_BASE_URL}/api/polizas/buscar?q=${encodeURIComponent(q)}&tipo=${searchType}`;
         try {
-            const res = await fetch(url);
-            if (!res.ok) throw new Error("Error buscando pólizas");
+            const res = await fetch(`${API_BASE_URL}/api/recibos/por-fecha?inicio=${fechaInicio}&fin=${fechaFin}`);
+            if (!res.ok) throw new Error("Error buscando recibos");
             const data = await res.json();
-            setResults(data);
+            setRecibosPorFecha(data);
         } catch (err) {
-            setError("No se pudo buscar pólizas.");
+            setErrorFechas("No se pudo buscar recibos por fecha.");
         }
-        setLoading(false);
+        setLoadingFechas(false);
     };
 
-    // Estadísticas
-    const stats = useMemo(() => {
-        if (!results.length) return null;
-        const total = results.length;
-        const activas = results.filter(p => (p.estatus || '').toUpperCase() !== 'CANCELADA').length;
-        const canceladas = total - activas;
-        const agentes = {};
-        results.forEach(p => {
-            const clave = p.clave_agente || '-';
-            if (!agentes[clave]) agentes[clave] = { nombre: p.nombre_agente || '-', count: 0 };
-            agentes[clave].count++;
+    // Agrupar por agente y sumar comisiones
+    const resumenPorAgente = useMemo(() => {
+        if (!recibosPorFecha.length) return [];
+        const map = {};
+        recibosPorFecha.forEach(r => {
+            const clave = r.clave_agente || '-';
+            if (!map[clave]) {
+                map[clave] = {
+                    clave_agente: clave,
+                    total_comis_agente: 0,
+                    total_comis_super: 0,
+                    total_comis_promo: 0,
+                    total_recibos: 0
+                };
+            }
+            map[clave].total_comis_agente += Number(r.comis_agente) || 0;
+            map[clave].total_comis_super += Number(r.comis_super) || 0;
+            map[clave].total_comis_promo += Number(r.comis_promo) || 0;
+            map[clave].total_recibos++;
         });
-        const agentesUnicos = Object.keys(agentes).length;
-        const topAgentes = Object.entries(agentes)
-            .sort((a, b) => b[1].count - a[1].count)
-            .slice(0, 3)
-            .map(([clave, info]) => ({ clave, nombre: info.nombre, count: info.count }));
-        return { total, activas, canceladas, agentesUnicos, topAgentes };
-    }, [results]);
+        return Object.values(map);
+    }, [recibosPorFecha]);
 
     return (
         <div className="max-w-3xl mx-auto p-4">
-            <h1 className="text-2xl font-bold mb-4">Buscador de Pólizas</h1>
-            <div className="flex gap-4 mb-4">
-                <select
-                    className="p-2 border rounded"
-                    value={searchType}
-                    onChange={e => {
-                        setSearchType(e.target.value);
-                        setResults([]);
-                        setQuery("");
-                        setSelectedAgente("");
-                    }}
-                >
-                    {SEARCH_TYPES.map(type => (
-                        <option key={type.value} value={type.value}>{type.label}</option>
-                    ))}
-                </select>
-            </div>
-            {searchType === "agente" ? (
-                <div className="mb-4">
-                    <select
-                        className="p-2 border rounded w-full"
-                        value={selectedAgente}
-                        onChange={e => { setSelectedAgente(e.target.value); setResults([]); }}
-                    >
-                        <option value="">Selecciona un agente...</option>
-                        {agentes.map(a => (
-                            <option key={a.clave} value={a.clave}>{a.nombre} (clave: {a.clave})</option>
-                        ))}
-                    </select>
-                    <button
-                        className="mt-2 bg-blue-600 text-white px-4 py-2 rounded w-full"
-                        onClick={handleSearch}
-                        disabled={!selectedAgente || loading}
-                    >
-                        {loading ? "Buscando..." : "Ver pólizas de este agente"}
-                    </button>
-                </div>
-            ) : (
-                <form onSubmit={handleSearch} className="flex gap-2 mb-4">
-                    <input
-                        type="text"
-                        className="flex-1 p-2 border rounded"
-                        placeholder={
-                            searchType === "poliza"
-                                ? "Buscar por número de póliza..."
-                                : searchType === "nombre_asegurado"
-                                    ? "Buscar por nombre del asegurado..."
-                                    : searchType === "promotoria"
-                                        ? "Buscar por promotoría..."
-                                        : "Buscar..."
-                        }
-                        value={query}
-                        onChange={e => setQuery(e.target.value)}
-                        required
-                    />
-                    <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded" disabled={loading}>
-                        {loading ? "Buscando..." : "Buscar"}
-                    </button>
-                </form>
-            )}
-            {error && <div className="text-red-500 mb-2">{error}</div>}
-            {stats && (
-                <div className="bg-gray-100 dark:bg-gray-800 rounded p-4 mb-6 flex flex-wrap gap-6 items-center justify-between">
-                    <div><b>Total pólizas:</b> {stats.total}</div>
-                    <div><b>Activas:</b> {stats.activas}</div>
-                    <div><b>Canceladas:</b> {stats.canceladas}</div>
-                    <div><b>Agentes distintos:</b> {stats.agentesUnicos}</div>
-                    <div>
-                        <b>Top agentes:</b>
-                        <ul className="list-disc ml-5">
-                            {stats.topAgentes.map(a => (
-                                <li key={a.clave}>{a.nombre} (clave: {a.clave}) - {a.count} pólizas</li>
-                            ))}
-                        </ul>
+            <h1 className="text-2xl font-bold mb-4">Buscar recibos por rango de fechas</h1>
+            <form className="flex flex-wrap gap-2 items-center mb-4" onSubmit={buscarRecibosPorFecha}>
+                <label className="flex flex-col">Desde
+                    <input type="date" value={fechaInicio} onChange={e => setFechaInicio(e.target.value)} className="p-2 border rounded" required />
+                </label>
+                <label className="flex flex-col">Hasta
+                    <input type="date" value={fechaFin} onChange={e => setFechaFin(e.target.value)} className="p-2 border rounded" required />
+                </label>
+                <button type="submit" className="bg-green-600 text-white px-4 py-2 rounded" disabled={loadingFechas}>Buscar</button>
+            </form>
+            {errorFechas && <div className="text-red-500 mt-2">{errorFechas}</div>}
+            {loadingFechas && <div className="text-gray-500 mt-2">Buscando...</div>}
+            {recibosPorFecha.length > 0 && (
+                <div className="mt-4">
+                    <h3 className="font-semibold mb-2">Recibos encontrados: {recibosPorFecha.length}</h3>
+                    <div className="overflow-x-auto">
+                        <table className="min-w-full text-xs">
+                            <thead>
+                                <tr className="bg-gray-200 dark:bg-gray-700">
+                                    <th className="p-2">Póliza</th>
+                                    <th className="p-2">Recibo</th>
+                                    <th className="p-2">Fecha movimiento</th>
+                                    <th className="p-2">Asegurado</th>
+                                    <th className="p-2">Agente</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {recibosPorFecha.map((r, i) => (
+                                    <tr key={i} className="border-b dark:border-gray-600">
+                                        <td className="p-2">{r.no_poliza}</td>
+                                        <td className="p-2">{r.recibo}</td>
+                                        <td className="p-2">{r.fecha_movimiento}</td>
+                                        <td className="p-2">{r.nombre_asegurado}</td>
+                                        <td className="p-2">{r.clave_agente}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             )}
-            {results.length > 0 && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {results.map((p, i) => (
-                        <div key={i} className="bg-white dark:bg-gray-900 rounded shadow p-4 border border-gray-200 dark:border-gray-700">
-                            <div className="font-bold text-lg mb-1">Póliza: {p.no_poliza}</div>
-                            <div className="mb-1"><b>Agente:</b> {p.nombre_agente || '-'} <span className="text-xs text-gray-500">(clave: {p.clave_agente})</span></div>
-                            <div className="mb-1"><b>Asegurado:</b> {p.nombre_asegurado}</div>
-                            <div className="mb-1"><b>Estatus:</b> <span className={((p.estatus || '').toUpperCase() === 'CANCELADA') ? 'text-red-500' : 'text-green-600'}>{p.estatus}</span></div>
-                        </div>
-                    ))}
+            {resumenPorAgente.length > 0 && (
+                <div className="mt-8">
+                    <h3 className="font-semibold mb-2">Resumen por agente</h3>
+                    <div className="overflow-x-auto">
+                        <table className="min-w-full text-xs">
+                            <thead>
+                                <tr className="bg-gray-200 dark:bg-gray-700">
+                                    <th className="p-2">Clave Agente</th>
+                                    <th className="p-2">Total Recibos</th>
+                                    <th className="p-2">Comisión Agente</th>
+                                    <th className="p-2">Comisión Supervisor</th>
+                                    <th className="p-2">Comisión Promotoria</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {resumenPorAgente.map((a, i) => (
+                                    <tr key={i} className="border-b dark:border-gray-600">
+                                        <td className="p-2">{a.clave_agente}</td>
+                                        <td className="p-2">{a.total_recibos}</td>
+                                        <td className="p-2">{a.total_comis_agente.toFixed(2)}</td>
+                                        <td className="p-2">{a.total_comis_super.toFixed(2)}</td>
+                                        <td className="p-2">{a.total_comis_promo.toFixed(2)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-            )}
-            {results.length === 0 && !loading && ((searchType === "agente" && selectedAgente) || (searchType !== "agente" && query)) && !error && (
-                <div className="text-gray-500">No se encontraron pólizas.</div>
             )}
         </div>
     );

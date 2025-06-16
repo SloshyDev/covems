@@ -17,11 +17,11 @@ export default function EditUserPage() {
 
     // Opciones para tipo de usuario con colores oscuros
     const tiposUsuario = [
-        { value: '1', label: 'Agente', color: 'bg-blue-900 text-blue-200' },
-        { value: '2', label: 'Promotor', color: 'bg-purple-900 text-purple-200' },
-        { value: '3', label: 'Supervisor', color: 'bg-orange-900 text-orange-200' },
-        { value: '4', label: 'Gerente', color: 'bg-red-900 text-red-200' },
-        { value: '5', label: 'Director', color: 'bg-emerald-900 text-emerald-200' }
+        { value: 1, label: 'Agente especial', color: 'bg-blue-900 text-blue-200' },
+        { value: 2, label: 'Agente DXN', color: 'bg-purple-900 text-purple-200' },
+        { value: 3, label: 'Supervisor', color: 'bg-orange-900 text-orange-200' },
+        { value: 4, label: 'Gerente', color: 'bg-red-900 text-red-200' },
+        { value: 5, label: 'Director', color: 'bg-emerald-900 text-emerald-200' }
     ];
 
     // Cargar usuarios al montar el componente
@@ -45,12 +45,20 @@ export default function EditUserPage() {
     useEffect(() => {
         if (isEditing && !selectedUser?.id && nuevoTipoUsuario) {
             // Buscar la clave más alta de ese tipo
-            const claves = users.filter(u => u.tipo_usuario === nuevoTipoUsuario).map(u => parseInt(u.clave)).filter(Boolean);
+            const tipoInt = parseInt(nuevoTipoUsuario);
+            const claves = users.filter(u => parseInt(u.tipo_usuario) === tipoInt).map(u => u.clave).filter(Boolean);
             const maxClave = claves.length > 0 ? Math.max(...claves) : 0;
             setClaveSugerida((maxClave + 1).toString());
-            setSelectedUser(prev => ({ ...prev, tipo_usuario: nuevoTipoUsuario, clave: (maxClave + 1).toString() }));
+            setSelectedUser(prev => ({ ...prev, tipo_usuario: tipoInt, clave: maxClave + 1 }));
         }
     }, [nuevoTipoUsuario, isEditing]);
+
+    // Asegurar que el cambio en el select de tipo_usuario actualice selectedUser
+    const handleTipoUsuarioChange = (e) => {
+        const value = e.target.value;
+        setNuevoTipoUsuario(value);
+        setSelectedUser(prev => ({ ...prev, tipo_usuario: value }));
+    };
 
     const fetchUsers = async () => {
         try {
@@ -81,7 +89,7 @@ export default function EditUserPage() {
         const { name, value } = e.target;
         setSelectedUser(prev => ({
             ...prev,
-            [name]: value
+            [name]: name === 'clave' ? parseInt(value) : value // clave como int
         }));
     };
 
@@ -92,7 +100,9 @@ export default function EditUserPage() {
             // Enviar el value (número) del estado directamente
             const userToSend = {
                 ...selectedUser,
-                localidad: selectedUser.localidad ? String(selectedUser.localidad) : '' // value numérico como string
+                localidad: selectedUser.localidad ? String(selectedUser.localidad) : '', // value numérico como string
+                clave: selectedUser.clave ? parseInt(selectedUser.clave) : undefined, // asegurar que clave sea int
+                tipo_usuario: selectedUser.tipo_usuario ? parseInt(selectedUser.tipo_usuario) : undefined, // asegurar que tipo_usuario sea int
             };
             // Eliminar esquema_pago si existe
             delete userToSend.esquema_pago;
@@ -202,8 +212,7 @@ export default function EditUserPage() {
                                     tipo_usuario: '',
                                     supervisor_clave: '',
                                     estado: 'activo',
-                                    esquema_pago: '',
-                                    clave: ''
+                                    clave: 0 // clave como int
                                 });
                                 setNuevoTipoUsuario('');
                                 setClaveSugerida('');
@@ -239,7 +248,7 @@ export default function EditUserPage() {
                                                 <select
                                                     name="tipo_usuario"
                                                     value={nuevoTipoUsuario}
-                                                    onChange={e => setNuevoTipoUsuario(e.target.value)}
+                                                    onChange={handleTipoUsuarioChange}
                                                     className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white appearance-none"
                                                 >
                                                     <option value="">Selecciona un tipo</option>
@@ -251,9 +260,9 @@ export default function EditUserPage() {
                                             <div>
                                                 <label className="block text-sm font-semibold text-gray-300 mb-2">Clave sugerida</label>
                                                 <input
-                                                    type="text"
+                                                    type="number"
                                                     name="clave"
-                                                    value={selectedUser.clave || ''}
+                                                    value={selectedUser.clave || 0}
                                                     onChange={handleInputChange}
                                                     className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white font-mono"
                                                     placeholder="Clave sugerida"
@@ -385,7 +394,7 @@ export default function EditUserPage() {
                                             className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-white placeholder-gray-400 appearance-none"
                                         >
                                             <option value="">Sin supervisor asignado</option>
-                                            {users.filter(u => u.tipo_usuario === '3').map(supervisor => (
+                                            {users.filter(u => parseInt(u.tipo_usuario) === 3).map(supervisor => (
                                                 <option key={supervisor.clave} value={supervisor.clave}>
                                                     {supervisor.clave} - {supervisor.nombre}
                                                 </option>

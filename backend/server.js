@@ -2,6 +2,7 @@ const express = require('express');
 const { Pool } = require('pg');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const zlib = require('zlib');
 require('dotenv').config(); // Load environment variables from .env file
 
 const app = express();
@@ -45,10 +46,22 @@ app.post('/api/users', async (req, res) => {
         banco,
         cuentaClabe,
         clave,
-        tipoUsuario,
+        tipo_usuario,
         supervisor_clave,
         estado,
     } = req.body;
+
+    // Normalizar clave y tipo_usuario para la base de datos
+    if (clave !== undefined && clave !== null && clave !== '') {
+        clave = parseInt(clave);
+    } else {
+        clave = null;
+    }
+    if (tipo_usuario !== undefined && tipo_usuario !== null && tipo_usuario !== '') {
+        tipo_usuario = parseInt(tipo_usuario);
+    } else {
+        tipo_usuario = null;
+    }
 
     // Rango de claves por tipo de usuario
     const claveRanges = {
@@ -60,8 +73,8 @@ app.post('/api/users', async (req, res) => {
     };
 
     // Si no hay clave, asignar automáticamente
-    if (!clave && tipoUsuario && claveRanges[tipoUsuario]) {
-        const { min, max } = claveRanges[tipoUsuario];
+    if (!clave && tipo_usuario && claveRanges[tipo_usuario]) {
+        const { min, max } = claveRanges[tipo_usuario];
         try {
             const result = await pool.query(
                 'SELECT MAX(clave::int) as max_clave FROM users WHERE clave::int >= $1 AND clave::int <= $2',
@@ -85,7 +98,7 @@ app.post('/api/users', async (req, res) => {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             RETURNING *;
         `;
-        const values = [nombre, fechaNacimiento, rfc, curp, localidad, celular, banco, cuentaClabe, clave, tipoUsuario, supervisor_clave, estado || 'activo'];
+        const values = [nombre, fechaNacimiento, rfc, curp, localidad, celular, banco, cuentaClabe, clave, tipo_usuario, supervisor_clave, estado || 'activo'];
         const insertResult = await pool.query(query, values);
 
         res.status(201).json(insertResult.rows[0]); // Return the inserted user
@@ -315,7 +328,43 @@ app.post('/api/solicitudes/update-polizas', async (req, res) => {
 
 // Endpoint para cargar estado de cuenta, insertar recibos y polizas ligadas a solicitudes y usuarios
 app.post('/api/recibos/upload-statement', async (req, res) => {
-    const { polizas, recibos } = req.body;
+    let polizas, recibos;
+    // Detectar si el contenido es gzip
+    if (req.headers['content-type'] === 'application/octet-stream') {
+        // Recibir el buffer completo
+        let chunks = [];
+        req.on('data', chunk => chunks.push(chunk));
+        req.on('end', async () => {
+            try {
+                const buffer = Buffer.concat(chunks);
+                zlib.gunzip(buffer, async (err, result) => {
+                    if (err) return res.status(400).json({ error: 'Error descomprimiendo datos.' });
+                    let data;
+                    try {
+                        data = JSON.parse(result.toString());
+                    } catch (e) {
+                        return res.status(400).json({ error: 'JSON inválido tras descompresión.' });
+                    }
+                    polizas = data.polizas;
+                    recibos = data.recibos;
+                    await processPolizasRecibos(polizas, recibos, req, res);
+                });
+            } catch (e) {
+                return res.status(400).json({ error: 'Error procesando datos comprimidos.' });
+            }
+        });
+        return;
+    } else {
+        // JSON normal
+        polizas = req.body.polizas;
+        recibos = req.body.recibos;
+        await processPolizasRecibos(polizas, recibos, req, res);
+        return;
+    }
+});
+
+// Lógica original extraída a función para reutilizar
+async function processPolizasRecibos(polizas, recibos, req, res) {
     if (!Array.isArray(polizas) || polizas.length === 0 || !Array.isArray(recibos) || recibos.length === 0) {
         return res.status(400).json({ error: 'No hay datos para procesar.' });
     }
@@ -407,6 +456,7 @@ app.post('/api/recibos/upload-statement', async (req, res) => {
             const comis_renovacion = row.comis_renovacion && String(row.comis_renovacion).trim() !== '' ? Math.round(Number(row.comis_renovacion) * 100) / 100 : null;
             const ano_vig = row.ano_vig && String(row.ano_vig).trim() !== '' ? Math.round(Number(row.ano_vig) * 100) / 100 : null;
             const comis_promo = row.comis_promo && String(row.comis_promo).trim() !== '' ? Math.round(Number(row.comis_promo) * 100) / 100 : null;
+            const comis_agente = row.comis_agente && String(row.comis_agente).trim() !== '' ? Math.round(Number(row.comis_agente) * 100) / 100 : null;
             let comis_agente_calc = comis_agente;
             // Calcular comis_agente si DSN es EMI
             if ((row.dsn || '').toString().trim().toUpperCase() === 'EMI') {
@@ -418,6 +468,7 @@ app.post('/api/recibos/upload-statement', async (req, res) => {
                 else if (formaPago === 'M') factor = 12;
                 comis_agente_calc = Math.round(((prima - recargo) * factor * 0.225) * 100) / 100;
             }
+            const comis_super = row.comis_super && String(row.comis_super).trim() !== '' ? Math.round(Number(row.comis_super) * 100) / 100 : null;
             await pool.query(
                 `INSERT INTO recibos (
                     grupo, clave_agente, no_poliza, nombre_asegurado, recibo, dsn, fecha_inicio, fecha_ultimo_mov, fecha_vencimiento, forma_pago, estatus, solicitud_ligada,
@@ -471,7 +522,7 @@ app.post('/api/recibos/upload-statement', async (req, res) => {
         }
         res.status(500).json({ error: 'Error procesando polizas/recibos.' });
     }
-});
+}
 
 // Endpoint para buscar pólizas por número de póliza, nombre asegurado, usuario (clave/nombre de agente), o promotoría
 app.get('/api/polizas/buscar', async (req, res) => {
@@ -538,6 +589,57 @@ app.get('/api/polizas/buscar', async (req, res) => {
     } catch (error) {
         console.error('Error buscando pólizas:', error);
         res.status(500).json({ error: 'Error buscando pólizas.' });
+    }
+});
+
+// API endpoint para agregar un saldo
+app.post('/api/saldos', async (req, res) => {
+    const { clave, fecha, saldo } = req.body;
+    try {
+        const result = await pool.query(
+            'INSERT INTO saldos (clave, fecha, saldo) VALUES ($1, $2, $3) RETURNING *',
+            [clave, fecha, saldo]
+        );
+        res.status(201).json(result.rows[0]);
+    } catch (error) {
+        console.error('Error insertando saldo:', error);
+        res.status(500).send('Error insertando saldo');
+    }
+});
+
+// API endpoint para obtener los saldos de un usuario
+app.get('/api/saldos/:clave', async (req, res) => {
+    const { clave } = req.params;
+    try {
+        const result = await pool.query(
+            'SELECT * FROM saldos WHERE clave = $1 ORDER BY fecha DESC',
+            [clave]
+        );
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error obteniendo saldos:', error);
+        res.status(500).send('Error obteniendo saldos');
+    }
+});
+
+// Endpoint para buscar recibos por rango de fechas
+app.get('/api/recibos/por-fecha', async (req, res) => {
+    const { inicio, fin } = req.query;
+    if (!inicio || !fin) {
+        return res.status(400).json({ error: 'Debes proporcionar las fechas "inicio" y "fin" en formato YYYY-MM-DD.' });
+    }
+    try {
+        const result = await pool.query(
+            `SELECT no_poliza, recibo, fecha_ultimo_mov AS fecha_movimiento, nombre_asegurado, clave_agente, comis_agente, comis_super, comis_promo
+             FROM recibos
+             WHERE fecha_ultimo_mov >= $1 AND fecha_ultimo_mov <= $2
+             ORDER BY fecha_ultimo_mov ASC`,
+            [inicio, fin]
+        );
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error buscando recibos por fecha:', error);
+        res.status(500).json({ error: 'Error buscando recibos por fecha.' });
     }
 });
 
