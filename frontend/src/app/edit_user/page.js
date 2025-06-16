@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { MagnifyingGlassIcon, PencilIcon, XMarkIcon, CheckIcon, UserIcon, UserPlusIcon } from '@heroicons/react/24/outline';
 import { estadosDeMexico, tiposDeUsuario } from "../constants";
+import API_BASE_URL from '../../config';
 
 export default function EditUserPage() {
     const [users, setUsers] = useState([]);
@@ -53,7 +54,7 @@ export default function EditUserPage() {
 
     const fetchUsers = async () => {
         try {
-            const response = await fetch('http://localhost:3000/api/users');
+            const response = await fetch(`${API_BASE_URL}/api/users`);
             if (response.ok) {
                 const data = await response.json();
                 // Ordenar por clave de menor a mayor
@@ -98,14 +99,14 @@ export default function EditUserPage() {
             let response;
             if (selectedUser.id) {
                 // Actualizar usuario existente
-                response = await fetch(`http://localhost:3000/api/users/${selectedUser.id}`, {
+                response = await fetch(`${API_BASE_URL}/api/users/${selectedUser.id}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(userToSend),
                 });
             } else {
                 // Crear nuevo usuario
-                response = await fetch('http://localhost:3000/api/users', {
+                response = await fetch(`${API_BASE_URL}/api/users`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(userToSend),

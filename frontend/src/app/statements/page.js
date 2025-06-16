@@ -1,7 +1,6 @@
 'use client';
 import React, { useState, useMemo, useEffect } from "react";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3000";
+import API_BASE_URL from '../../config';
 
 const SEARCH_TYPES = [
     { value: "poliza", label: "Póliza" },
