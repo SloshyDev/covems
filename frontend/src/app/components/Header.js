@@ -35,6 +35,12 @@ const Header = () => {
                         Estados de cuenta
                     </Link>
                 </li>
+                <li className="text-white">
+                    <Link href="/edit_user" className='flex items-center text-white hover:text-gray-300'>
+                        <ChartBarIcon className="h-5 w-5 inline-block mr-2" />
+                        Editar usarios
+                    </Link>
+                </li>
             </ul>
         </header>
     );
