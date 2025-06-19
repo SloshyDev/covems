@@ -28,7 +28,7 @@ const createSolicitud = async (req, res) => {
             contratante,
             agente_clave,
             pase,
-            prima_ahorro,
+            prima_ahorro === undefined || prima_ahorro === '' ? null : prima_ahorro,
             forma_pago,
             prima_solicitada,
             no_poliza
