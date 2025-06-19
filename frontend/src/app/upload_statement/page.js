@@ -18,7 +18,6 @@ const UploadStatementPage = () => {
     // Filtros para los cards
     const [filtroEstatus, setFiltroEstatus] = useState('');
     const [filtroFormaPago, setFiltroFormaPago] = useState('');
-    const [filtroAgente, setFiltroAgente] = useState('');
 
     const handleFileChange = (e) => {
         setFile(e.target.files[0]);
@@ -54,19 +53,18 @@ const UploadStatementPage = () => {
             rowsFiltrados.forEach((row) => {
                 const no_poliza = String(row["No. Poliza"]);
                 if (!no_poliza) return;
-                const solicitud = solicitudes.find(s => String(s.no_poliza) === no_poliza);
-                const agente_clave_final = solicitud ? solicitud.agente_clave : row["Clave del agente"];
+                // Eliminar toda lógica de agente_clave
                 if (!polizaMap[no_poliza]) {
                     polizaMap[no_poliza] = {
                         grupo: row["Grupo"],
-                        clave_agente: agente_clave_final,
+                        // clave_agente eliminado
                         no_poliza,
                         nombre_asegurado: row["Nombre Asegurado"],
                         dsn: row["Dsn"],
                         fecha_inicio: row["Fecha Inicio"],
                         forma_pago: row["Forma de pago"],
                         estatus: (row["Dsn"] || "").toUpperCase() === "CAN" ? "CANCELADA" : "VIGENTE",
-                        solicitud_ligada: solicitud ? solicitud.no_solicitud : null,
+                        solicitud_ligada: solicitudes.find(s => String(s.no_poliza) === no_poliza)?.no_solicitud || null,
                         recibos: [],
                         fechas_mov: [],
                         vencimientos: []
@@ -104,7 +102,7 @@ const UploadStatementPage = () => {
                 const estatusFiltro = (p.dsn || '').toUpperCase() === 'EMI' ? 'NUEVOS' : p.estatus;
                 return {
                     grupo: p.grupo,
-                    clave_agente: p.clave_agente,
+                    // clave_agente eliminado
                     no_poliza: p.no_poliza,
                     nombre_asegurado: p.nombre_asegurado,
                     ultimo_recibo: ultimoRecibo,
@@ -132,7 +130,7 @@ const UploadStatementPage = () => {
                 const estatusFiltro = (p.dsn || '').toUpperCase() === 'EMI' ? 'NUEVOS' : p.estatus;
                 return {
                     grupo: p.grupo,
-                    clave_agente: parseInt(p.clave_agente),
+                    // clave_agente eliminado
                     no_poliza: p.no_poliza,
                     nombre_asegurado: p.nombre_asegurado,
                     ultimo_recibo: ultimoRecibo,
@@ -147,9 +145,7 @@ const UploadStatementPage = () => {
             });
             // Enriquecer recibos antes de enviar al backend
             const recibosEnriquecidos = rowsFiltrados.map(row => {
-                const solicitud = solicitudes.find(s => String(s.no_poliza) === String(row["No. Poliza"]));
-                let clave_agente = solicitud ? solicitud.agente_clave : row["Clave del agente"];
-                if (!clave_agente || clave_agente === "null" || clave_agente === null) clave_agente = "SIN_AGENTE";
+                // Eliminar lógica de clave_agente
                 const dsn = (row["Dsn"] || "").toString().trim().toUpperCase();
                 const anoVig = Number(row["Año Vig."] || row["Ano Vig."] || 0);
                 const importeComble = Number(row["Importe Comble"] || 0);
@@ -172,7 +168,7 @@ const UploadStatementPage = () => {
                 }
                 return {
                     grupo: row["Grupo"],
-                    clave_agente,
+                    // clave_agente eliminado
                     no_poliza: row["No. Poliza"],
                     nombre_asegurado: row["Nombre Asegurado"],
                     recibo: row["Recibo"],
@@ -182,7 +178,7 @@ const UploadStatementPage = () => {
                     fecha_vencimiento: row["Fecha vencimiento"],
                     forma_pago: row["Forma de pago"],
                     estatus: dsn === "CAN" ? "CANCELADA" : "VIGENTE",
-                    solicitud_ligada: solicitud ? solicitud.no_solicitud : null,
+                    solicitud_ligada: solicitudes.find(s => String(s.no_poliza) === String(row["No. Poliza"]))?.no_solicitud || null,
                     prima_fracc: row["Prima Fracc"],
                     recargo_fijo: row["Recargo Fijo"],
                     importe_comble: row["Importe Comble"],
@@ -194,14 +190,33 @@ const UploadStatementPage = () => {
                     comis_promo,
                     comis_agente,
                     comis_super,
-                    clave_supervisor: supervisor_clave || '-' // Ahora el campo es clave_supervisor para backend
+                    clave_supervisor: user?.supervisor_clave || '-' // Ahora el campo es clave_supervisor para backend
                 };
             });
-            // Validar que ningún recibo tenga clave_agente vacío
-            const recibosSinAgente = recibosEnriquecidos.filter(r => !r.clave_agente || r.clave_agente === "SIN_AGENTE");
-            if (recibosSinAgente.length > 0) {
-                const detalles = recibosSinAgente.map(r => `Poliza: ${r.no_poliza || '-'}, Recibo: ${r.recibo || '-'}`).join('\n');
-                setResult({ error: `Hay ${recibosSinAgente.length} recibos sin clave de agente.\nCorrige el archivo o liga las solicitudes antes de subir.\n\nDetalles:\n${detalles}` });
+            // Eliminar validación de recibosSinAgente
+            // --- VALIDACIÓN DE RECIBOS EXISTENTES ---
+            // Prepara identificadores únicos de recibos
+            const identificadores = recibosEnriquecidos.map(r => ({
+                no_poliza: r.no_poliza,
+                recibo: r.recibo
+            }));
+            // Consulta al backend cuáles ya existen
+            const respExistentes = await fetch(`${API_BASE_URL}/api/recibos/existentes`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ recibos: identificadores })
+            });
+            let existentes = [];
+            if (respExistentes.ok) {
+                const dataExistentes = await respExistentes.json();
+                existentes = dataExistentes.existentes || [];
+            }
+            // Filtra los recibos que NO existen
+            const recibosFiltrados = recibosEnriquecidos.filter(r =>
+                !existentes.some(e => String(e.no_poliza) === String(r.no_poliza) && String(e.recibo) === String(r.recibo))
+            );
+            if (recibosFiltrados.length === 0) {
+                setResult({ error: 'Todos los recibos del archivo ya existen en la base de datos. No se subirá ninguno.' });
                 setLoading(false);
                 return;
             }
@@ -220,18 +235,18 @@ const UploadStatementPage = () => {
             setResult({
                 info: 'Datos listos para enviar. Se enviarán los siguientes datos al backend:',
                 resumen: {
-                    total_recibos: recibosEnriquecidos.length,
+                    total_recibos: recibosFiltrados.length,
                     total_polizas: polizasUnicas.length,
                     polizas_muestra: polizasUnicas.slice(0, 5),
-                    recibos_muestra: recibosEnriquecidos.slice(0, 5)
+                    recibos_muestra: recibosFiltrados.slice(0, 5)
                 }
             });
             setJsonPreview({
                 polizas: polizasUnicas,
-                recibos: recibosEnriquecidos
+                recibos: recibosFiltrados
             });
             console.log('Polizas a enviar:', polizasUnicas);
-            console.log('Recibos a enviar:', recibosEnriquecidos);
+            console.log('Recibos a enviar:', recibosFiltrados);
             setCurrentPage(1); // Reset to first page on new upload
             setReadyToSend(true);
             setLoading(false);
@@ -325,14 +340,12 @@ const UploadStatementPage = () => {
     // Obtener valores únicos para los selects
     const estatusOptions = jsonPreview ? [...new Set(jsonPreview.polizas.map(p => p.estatusFiltro))] : [];
     const formaPagoOptions = jsonPreview ? [...new Set(jsonPreview.polizas.map(p => p.forma_pago))] : [];
-    const agenteOptions = jsonPreview ? [...new Set(jsonPreview.polizas.map(p => p.clave_agente))] : [];
 
     // Filtrar polizas según selects
     const polizasFiltradas = jsonPreview && jsonPreview.polizas ? jsonPreview.polizas.filter(p => {
         return (
             (!filtroEstatus || p.estatusFiltro === filtroEstatus) &&
-            (!filtroFormaPago || p.forma_pago === filtroFormaPago) &&
-            (!filtroAgente || String(p.clave_agente) === String(filtroAgente))
+            (!filtroFormaPago || p.forma_pago === filtroFormaPago)
         );
     }) : [];
 
@@ -401,13 +414,6 @@ const UploadStatementPage = () => {
                             <select value={filtroFormaPago} onChange={e => { setFiltroFormaPago(e.target.value); setCurrentPage(1); }} className="bg-gray-700 text-white rounded px-2 py-1">
                                 <option value="">Todas</option>
                                 {formaPagoOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                            </select>
-                        </div>
-                        <div>
-                            <label className="block text-xs text-gray-400 mb-1">Clave Agente</label>
-                            <select value={filtroAgente} onChange={e => { setFiltroAgente(e.target.value); setCurrentPage(1); }} className="bg-gray-700 text-white rounded px-2 py-1">
-                                <option value="">Todos</option>
-                                {agenteOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                             </select>
                         </div>
                     </div>

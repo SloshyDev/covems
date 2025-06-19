@@ -1,78 +1,51 @@
 const pool = require('../config/database');
 const zlib = require('zlib');
+const { formatDateYMD } = require('../utils/dateFormat');
 
 // Lógica para procesar pólizas y recibos
 const processPolizasRecibos = async (polizas, recibos, req, res) => {
+    console.log('INICIO processPolizasRecibos');
     if (!Array.isArray(polizas) || polizas.length === 0 || !Array.isArray(recibos) || recibos.length === 0) {
+        console.log('No hay datos para procesar');
         return res.status(400).json({ error: 'No hay datos para procesar.' });
     }
-    
-    // Backend validation for clave_agente
-    const invalidPolizas = polizas.filter(p => !p.clave_agente || isNaN(Number(p.clave_agente)) || String(p.clave_agente).trim() === '' || p.clave_agente === 'SIN_AGENTE');
-    const invalidRecibos = recibos.filter(r => !r.clave_agente || isNaN(Number(r.clave_agente)) || String(r.clave_agente).trim() === '' || r.clave_agente === 'SIN_AGENTE');
-    
-    if (invalidPolizas.length > 0 || invalidRecibos.length > 0) {
-        return res.status(400).json({
-            error: 'Algunos registros tienen clave_agente inválida o faltante.',
-            detalles: {
-                polizas: invalidPolizas.map(p => ({ no_poliza: p.no_poliza, clave_agente: p.clave_agente })),
-                recibos: invalidRecibos.map(r => ({ no_poliza: r.no_poliza, recibo: r.recibo, clave_agente: r.clave_agente }))
-            }
-        });
-    }
-    
-    let recibos_insertados = 0;
-    let polizas_insertadas = 0;
-    let detalles = [];
-    
-    try {
-        // 1. Insertar/actualizar polizas únicas
-        for (const poliza of polizas) {
-            let solicitud_ligada = poliza.solicitud_ligada;
-            if (!solicitud_ligada && poliza.no_poliza) {
-                const solicitudRes = await pool.query(
-                    'SELECT no_solicitud FROM solicitudes WHERE no_poliza = $1',
-                    [poliza.no_poliza]
-                );
-                if (solicitudRes.rows.length > 0) {
-                    solicitud_ligada = solicitudRes.rows[0].no_solicitud;
-                }
-            }
-            await pool.query(
-                `INSERT INTO polizas (
-                    grupo, clave_agente, no_poliza, nombre_asegurado, ultimo_recibo, dsn, fecha_inicio, fecha_ultimo_mov, forma_pago, estatus, solicitud_ligada
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-                ON CONFLICT (no_poliza) DO UPDATE SET
-                    grupo=EXCLUDED.grupo,
-                    clave_agente=EXCLUDED.clave_agente,
-                    nombre_asegurado=EXCLUDED.nombre_asegurado,
-                    ultimo_recibo=EXCLUDED.ultimo_recibo,
-                    dsn=EXCLUDED.dsn,
-                    fecha_inicio=EXCLUDED.fecha_inicio,
-                    fecha_ultimo_mov=EXCLUDED.fecha_ultimo_mov,
-                    forma_pago=EXCLUDED.forma_pago,
-                    estatus=EXCLUDED.estatus,
-                    solicitud_ligada=EXCLUDED.solicitud_ligada
-                `,
-                [
-                    poliza.grupo,
-                    Number(poliza.clave_agente),
-                    poliza.no_poliza,
-                    poliza.nombre_asegurado,
-                    poliza.ultimo_recibo,
-                    poliza.dsn,
-                    poliza.fecha_inicio,
-                    poliza.fecha_ultimo_mov,
-                    poliza.forma_pago,
-                    poliza.estatus,
-                    solicitud_ligada
-                ]
-            );
-            polizas_insertadas++;
+    // Validar que todas las pólizas existan en la base de datos
+    const polizasExistentes = [];
+    for (const poliza of polizas) {
+        const polizaRes = await pool.query('SELECT 1 FROM polizas WHERE no_poliza = $1', [poliza.no_poliza]);
+        if (polizaRes.rows.length > 0) {
+            polizasExistentes.push(poliza);
         }
-        
-        // 2. Insertar todos los recibos
-        for (const row of recibos) {
+    }
+    console.log('Polizas existentes:', polizasExistentes.length);
+    if (polizasExistentes.length === 0) {
+        console.log('No hay pólizas válidas para procesar');
+        return res.status(400).json({ error: 'No hay pólizas válidas para procesar.' });
+    }
+    // Filtrar recibos que correspondan a pólizas existentes
+    let recibosFiltrados = recibos.filter(r => polizasExistentes.some(p => p.no_poliza === r.no_poliza));
+    console.log('Recibos filtrados:', recibosFiltrados.length);
+    // Eliminar recibos duplicados (por No. poliza, Fecha movimiento y Dsn)
+    const recibosUnicos = [];
+    for (const recibo of recibosFiltrados) {
+        const existe = await pool.query(
+            'SELECT 1 FROM recibos WHERE no_poliza = $1 AND fecha_movimiento = $2 AND dsn = $3',
+            [recibo.no_poliza, recibo.fecha_movimiento, recibo.dsn]
+        );
+        if (existe.rows.length === 0) {
+            recibosUnicos.push(recibo);
+        }
+    }
+    console.log('Recibos únicos para insertar:', recibosUnicos.length);
+    if (recibosUnicos.length === 0) {
+        console.log('Todos los recibos ya existen en la base de datos');
+        return res.status(400).json({ error: 'Todos los recibos ya existen en la base de datos.' });
+    }
+    let recibos_insertados = 0;
+    let detalles = [];
+    try {
+        // Solo insertar recibos
+        for (const row of recibosUnicos) {
             let solicitud_ligada = null;
             if (row.no_poliza) {
                 const solicitudRes = await pool.query(
@@ -123,7 +96,7 @@ const processPolizasRecibos = async (polizas, recibos, req, res) => {
                 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
                 [
                     row.grupo,
-                    Number(row.clave_agente),
+                    row.clave_agente || null, // Permitir null
                     row.no_poliza,
                     row.nombre_asegurado,
                     row.recibo,
@@ -155,7 +128,8 @@ const processPolizasRecibos = async (polizas, recibos, req, res) => {
                 solicitud_ligada
             });
         }
-        res.json({ polizas_insertadas, recibos_insertados, detalles });
+        console.log('Recibos insertados:', recibos_insertados);
+        res.json({ recibos_insertados, detalles });
     } catch (error) {
         console.error('Error procesando polizas/recibos:', error);
         if (error.code === '23502' && error.column === 'clave_agente') {
@@ -164,27 +138,33 @@ const processPolizasRecibos = async (polizas, recibos, req, res) => {
                 detalles: error.detail || error.message
             });
         }
-        res.status(500).json({ error: 'Error procesando polizas/recibos.' });
+        res.status(500).json({ error: 'Error procesando polizas/recibos.', detalles: error.message, stack: error.stack });
     }
 };
 
 // Cargar estado de cuenta
 const uploadStatement = async (req, res) => {
+    console.log('INICIO uploadStatement');
     let polizas, recibos;
-    
-    // Detectar si el contenido es gzip
+
     if (req.headers['content-type'] === 'application/octet-stream') {
         let chunks = [];
         req.on('data', chunk => chunks.push(chunk));
         req.on('end', async () => {
             try {
+                console.log('Recibido archivo comprimido');
                 const buffer = Buffer.concat(chunks);
                 zlib.gunzip(buffer, async (err, result) => {
-                    if (err) return res.status(400).json({ error: 'Error descomprimiendo datos.' });
+                    if (err) {
+                        console.error('Error descomprimiendo datos:', err);
+                        return res.status(400).json({ error: 'Error descomprimiendo datos.' });
+                    }
                     let data;
                     try {
                         data = JSON.parse(result.toString());
+                        console.log('JSON descomprimido correctamente');
                     } catch (e) {
+                        console.error('JSON inválido tras descompresión:', e);
                         return res.status(400).json({ error: 'JSON inválido tras descompresión.' });
                     }
                     polizas = data.polizas;
@@ -192,11 +172,13 @@ const uploadStatement = async (req, res) => {
                     await processPolizasRecibos(polizas, recibos, req, res);
                 });
             } catch (e) {
+                console.error('Error procesando datos comprimidos:', e);
                 return res.status(400).json({ error: 'Error procesando datos comprimidos.' });
             }
         });
         return;
     } else {
+        console.log('Recibido datos por JSON normal');
         polizas = req.body.polizas;
         recibos = req.body.recibos;
         await processPolizasRecibos(polizas, recibos, req, res);
@@ -276,23 +258,112 @@ const buscarRecibosPorFecha = async (req, res) => {
     if (!inicio || !fin) {
         return res.status(400).json({ error: 'Debes proporcionar las fechas "inicio" y "fin" en formato YYYY-MM-DD.' });
     }
-    try {
-        const result = await pool.query(
-            `SELECT no_poliza, recibo, fecha_ultimo_mov AS fecha_movimiento, nombre_asegurado, clave_agente, comis_agente, comis_super, comis_promo
-             FROM recibos
-             WHERE fecha_ultimo_mov >= $1 AND fecha_ultimo_mov <= $2
-             ORDER BY fecha_ultimo_mov ASC`,
+    try {        const result = await pool.query(
+            `SELECT r.no_poliza, r.recibo, r.fecha_ultimo_mov AS fecha_movimiento, r.nombre_asegurado, 
+                    r.clave_agente, r.comis_agente, r.comis_super, r.comis_promo, r.clave_supervisor,
+                    u.nombre as nombre_agente
+             FROM recibos r
+             LEFT JOIN users u ON r.clave_agente::text = u.clave::text
+             WHERE r.fecha_ultimo_mov >= $1 AND r.fecha_ultimo_mov <= $2
+             AND (u.estado IS NULL OR u.estado != 'cancelado')
+             ORDER BY r.fecha_ultimo_mov ASC`,
             [inicio, fin]
         );
-        res.json(result.rows);
+        // Formatear fechas antes de enviar la respuesta
+        const rowsFormateadas = result.rows.map(row => ({
+            ...row,
+            fecha_movimiento: formatDateYMD(row.fecha_movimiento),
+            fecha_inicio: formatDateYMD(row.fecha_inicio),
+            fecha_vencimiento: formatDateYMD(row.fecha_vencimiento),
+        }));
+        res.json(rowsFormateadas);
     } catch (error) {
         console.error('Error buscando recibos por fecha:', error);
         res.status(500).json({ error: 'Error buscando recibos por fecha.' });
     }
 };
 
+// Buscar recibos detallados por clave de agente y fecha
+const buscarRecibosDetalladosPorAgente = async (req, res) => {
+    const { clave } = req.params;
+    const { inicio, fin } = req.query;
+    
+    if (!inicio || !fin) {
+        return res.status(400).json({ error: 'Debes proporcionar las fechas "inicio" y "fin" en formato YYYY-MM-DD.' });
+    }
+    
+    try {
+        const result = await pool.query(
+            `SELECT 
+                r.no_poliza, 
+                r.recibo, 
+                r.fecha_ultimo_mov AS fecha_movimiento, 
+                r.nombre_asegurado, 
+                r.clave_agente, 
+                r.comis_agente, 
+                r.comis_super, 
+                r.comis_promo,
+                r.prima_fracc,
+                r.recargo_fijo,
+                r.forma_pago,
+                r.dsn,
+                r.estatus,
+                r.fecha_inicio,
+                r.fecha_vencimiento,
+                r.solicitud_ligada,
+                p.grupo,
+                p.fecha_inicio AS poliza_fecha_inicio,
+                p.estatus AS poliza_estatus,
+                u.nombre AS nombre_agente
+             FROM recibos r
+             LEFT JOIN polizas p ON r.no_poliza = p.no_poliza
+             LEFT JOIN users u ON r.clave_agente::text = u.clave::text
+             WHERE r.clave_agente::text = $1
+             AND r.fecha_ultimo_mov >= $2 AND r.fecha_ultimo_mov <= $3
+             AND (u.estado IS NULL OR u.estado != 'cancelado')
+             ORDER BY r.fecha_ultimo_mov ASC`,
+            [clave, inicio, fin]
+        );
+        // Formatear fechas antes de enviar la respuesta
+        const rowsFormateadas = result.rows.map(row => ({
+            ...row,
+            fecha_movimiento: formatDateYMD(row.fecha_movimiento),
+            fecha_inicio: formatDateYMD(row.fecha_inicio),
+            fecha_vencimiento: formatDateYMD(row.fecha_vencimiento),
+        }));
+        res.json(rowsFormateadas);
+    } catch (error) {
+        console.error('Error buscando recibos detallados:', error);
+        res.status(500).json({ error: 'Error buscando recibos detallados.' });
+    }
+};
+
+const verificarRecibosExistentes = async (req, res) => {
+    try {
+        const recibos = req.body.recibos; // [{ no_poliza, recibo }]
+        if (!Array.isArray(recibos) || recibos.length === 0) {
+            return res.status(400).json({ error: 'No se enviaron recibos para verificar.' });
+        }
+        // Construir consulta dinámica
+        const values = [];
+        const conditions = recibos.map((r, i) => {
+            values.push(r.no_poliza, r.recibo);
+            return `(no_poliza = $${i * 2 + 1} AND recibo = $${i * 2 + 2})`;
+        });
+        const query = `SELECT no_poliza, recibo FROM recibos WHERE ${conditions.join(' OR ')}`;
+        const result = await pool.query(query, values);
+        return res.json({ existentes: result.rows });
+    } catch (err) {
+        return res.status(500).json({ error: 'Error verificando recibos existentes', details: err.message });
+    }
+};
+
 module.exports = {
     uploadStatement,
     buscarPolizas,
-    buscarRecibosPorFecha
+    buscarRecibosPorFecha,
+    buscarRecibosDetalladosPorAgente,
+    verificarRecibosExistentes
 };
+
+console.log('Servidor backend iniciado');
